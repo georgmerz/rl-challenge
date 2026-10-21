@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RL Challenge · Atari Surround</title>
+  <style>
+    :root { --red:#d3073f; --ink:#171717; --muted:#666; --paper:#fff; --panel:#f3f3f3; }
+    * { box-sizing:border-box; } body { margin:0; font-family:Arial,sans-serif; color:var(--ink); background:var(--paper); }
+    header { padding:26px 7vw 18px; border-bottom:5px solid var(--red); }
+    header h1 { margin:0; color:var(--red); font-size:32px; font-weight:400; } header p { margin:8px 0 0; color:var(--muted); }
+    main { max-width:1120px; margin:34px auto; padding:0 28px; display:grid; grid-template-columns:310px 1fr; gap:34px; }
+    .controls { background:var(--panel); padding:24px; align-self:start; } h2 { margin:0 0 20px; font-size:21px; }
+    label { display:block; font-weight:bold; margin:18px 0 7px; } input[type=file] { width:100%; } button { margin-top:24px; width:100%; padding:13px; border:0; background:var(--red); color:white; font-size:16px; cursor:pointer; } button:disabled { opacity:.55; cursor:wait; }
+    .hint { color:var(--muted); font-size:13px; line-height:1.45; margin-top:18px; } .status { margin-top:18px; min-height:22px; font-size:14px; }
+    .arena { min-width:0; } .score { display:flex; justify-content:space-between; font-size:22px; margin-bottom:14px; } .score strong { color:var(--red); } canvas { display:block; width:100%; max-width:800px; background:#000; image-rendering:auto; } .message { margin-top:14px; color:var(--muted); }
+    @media (max-width:800px) { main { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <header><h1>RL Challenge · Atari Surround</h1><p>Testlauf für zwei exportierte PyTorch-Modelle</p></header>
+  <main>
+    <section class="controls">
+      <h2>Modelle laden</h2>
+      <form id="form">
+        <label for="model1">Modell · Spieler 1 links</label>
+        <input id="model1" name="model_1" type="file" accept=".pt2" required>
+        <label for="model2">Modell · Spieler 2 rechts</label>
+        <input id="model2" name="model_2" type="file" accept=".pt2" required>
+        <button id="start" type="submit">Partie starten</button>
+      </form>
+      <div class="hint">Eingabe: aktuelles RGB-Bild plus Spielerrolle. Ausgabe: eine Surround-Aktion von 0 bis 4.</div>
+      <div id="status" class="status"></div>
+    </section>
+    <section class="arena">
+      <div class="score"><span>Spieler 1 links <strong id="s1">0</strong></span><span>Spieler 2 rechts <strong id="s2">0</strong></span></div>
+      <canvas id="canvas" width="800" height="1050"></canvas>
+      <div id="message" class="message">Bitte zwei Modelle auswählen.</div>
+    </section>
+  </main>
+  <script>
+    const form = document.querySelector('#form'), start = document.querySelector('#start');
+    const statusEl = document.querySelector('#status'), message = document.querySelector('#message');
+    const canvas = document.querySelector('#canvas'), ctx = canvas.getContext('2d');
+    async function refresh() {
+      const res = await fetch('/api/state'); const state = await res.json();
+      document.querySelector('#s1').textContent = state.score?.['Spieler 1'] ?? 0;
+      document.querySelector('#s2').textContent = state.score?.['Spieler 2'] ?? 0;
+      message.textContent = state.error || state.message;
+      if (state.frame) { const img = new Image(); img.onload = () => { canvas.width=img.width; canvas.height=img.height; ctx.drawImage(img,0,0); }; img.src=state.frame; }
+      if (state.status === 'running' || state.status === 'starting') start.disabled = true; else start.disabled = false;
+    }
+    form.addEventListener('submit', async (event) => { event.preventDefault(); statusEl.textContent='Upload und Modellprüfung laufen…'; start.disabled=true;
+      const res = await fetch('/api/start', { method:'POST', body:new FormData(form) }); const data = await res.json(); statusEl.textContent = data.error || 'Partie gestartet'; if (data.error) start.disabled=false;
+    });
+    setInterval(refresh, 100); refresh();
+  </script>
+</body>
+</html>

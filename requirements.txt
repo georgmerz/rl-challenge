@@ -1,0 +1,7 @@
+flask>=3.0
+numpy>=1.26
+torch>=2.2
+pettingzoo[atari]>=1.24
+AutoROM[accept-rom-license]>=0.6
+pygame>=2.5
+Pillow>=10.0
