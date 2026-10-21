@@ -162,6 +162,81 @@ Ladet anschließend `my_policy.pt2` als eines der beiden Modelle im Browser hoch
 Für ein bildbasiertes Beispiel mit einer einfachen Wandvermeidung könnt ihr
 auch `create_baselines.py` lesen oder ausführen.
 
+## Eigenes Modell im Repository entwickeln
+
+Der einfachste Workflow ist, die vorhandene Baseline als Ausgangspunkt zu
+nehmen und schrittweise zu verbessern.
+
+1. Repository klonen und Abhängigkeiten installieren:
+
+   ```bash
+   git clone https://github.com/georgmerz/rl-challenge.git
+   cd rl-challenge
+   python -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+   AutoROM --accept-license
+   ```
+
+2. Die mitgelieferten Referenzmodelle erzeugen und ausprobieren:
+
+   ```bash
+   python create_baselines.py
+   python app.py
+   ```
+
+   Im Browser könnt ihr dann beispielsweise
+   `baselines/baseline_straight.pt2` gegen
+   `baselines/baseline_wall_avoid.pt2` spielen lassen. Die zugehörigen
+   Policy-Klassen stehen in `create_baselines.py` und sind zum Experimentieren
+   gedacht.
+
+3. Legt eine eigene Datei an, zum Beispiel `my_policy.py`. Startet mit einer
+   einfachen Policy, die die Schnittstelle erfüllt:
+
+   ```python
+   import torch
+
+
+   class MyPolicy(torch.nn.Module):
+       def forward(self, image: torch.Tensor, player_id: torch.Tensor) -> torch.Tensor:
+           # Hier kommt eure Bildverarbeitung oder euer neuronales Netz hin.
+           # Beispiel: immer nach oben lenken.
+           return torch.full(
+               (image.shape[0],), 1, dtype=torch.int64, device=image.device
+           )
+   ```
+
+4. Exportiert sie am Ende derselben Datei oder in `export_policy.py` als
+   sichere `.pt2`-Datei. Ein normaler `torch.save(model, ...)`-Export ist
+   **nicht** kompatibel mit dem Runner.
+
+   ```python
+   from my_policy import MyPolicy
+   import torch
+
+   policy = MyPolicy().eval()
+   example_image = torch.zeros((1, 3, 210, 160), dtype=torch.float32)
+   example_player_id = torch.ones((1,), dtype=torch.int64)
+
+   exported = torch.export.export(policy, (example_image, example_player_id))
+   torch.export.save(exported, "my_policy.pt2")
+   ```
+
+   Führt die Exportdatei mit `python export_policy.py` aus und ladet danach
+   `my_policy.pt2` im Browser hoch. Die Datei darf höchstens 250 MB groß sein.
+
+5. Wiederholt den Test nach jeder Änderung gegen beide Referenzmodelle. Achtet
+   besonders darauf, dass `forward(image, player_id)` keine Python-Objekte,
+   NumPy-Arrays oder Zufallsausgaben zurückgibt, sondern stets genau eine
+   gültige `int64`-Aktionsnummer pro Batch-Element.
+
+Für ein lernendes Modell könnt ihr in `MyPolicy` statt der festen Aktion ein
+CNN verwenden und dessen Gewichte mit eurem eigenen RL- oder
+Imitation-Learning-Training füllen. Das Turnier-Repository stellt den
+verlässlichen Export- und Test-Runner bereit; eine Trainingspipeline ist
+absichtlich nicht vorgegeben.
+
 ## Nächste Schritte
 
 - mehrere Spiele pro Duell und Seitenwechsel ergänzen
