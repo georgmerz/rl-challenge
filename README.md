@@ -151,6 +151,9 @@ Für dieses einfachere Duell gegen eine feste Baseline ist 1 Million Schritte
 ein sinnvoller erster Colab-Lauf; 20.000 Schritte testen nur Installation und
 Export.
 
+Für einen längeren Linux-/NVIDIA-Serverlauf mit Checkpoints und Download gibt
+es die Anleitung [SERVER_TRAINING.md](SERVER_TRAINING.md).
+
 Das Skript exportiert standardmäßig nach jeweils 1.000 Schritten einen
 Checkpoint. Ein Testlauf prüft nur die Technik, nicht die Spielstärke:
 
