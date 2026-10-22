@@ -20,8 +20,8 @@ def main() -> None:
     args = parser.parse_args()
 
     agent = ModelAgent(args.model)
-    image = np.zeros((210, 160, 3), dtype=np.uint8)
-    actions = [agent.act(image, player_id) for player_id in (1, 2)]
+    frames = np.zeros((4, 210, 160, 3), dtype=np.uint8)
+    actions = [agent.act(frames, player_id) for player_id in (1, 2)]
     print(f"OK: {args.model} ist turnierkompatibel auf CPU (Testaktionen: {actions}).")
 
 

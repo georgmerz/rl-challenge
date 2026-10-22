@@ -1,7 +1,7 @@
 """Train a small PPO self-play baseline for the Atari Pong challenge.
 
 The resulting ``.onnx`` file implements the public challenge interface:
-    image:     float32 [1, 3, 210, 160] in [0, 1]
+    image:     float32 [1, 12, 210, 160] in [0, 1]
     player_id: int64 [1]
     action:    int64 tensor containing one action in {0, ..., 5}
 
@@ -63,8 +63,9 @@ class ExportedPolicy(nn.Module):
         self.actor_critic = actor_critic
 
     def forward(self, image: torch.Tensor, player_id: torch.Tensor) -> torch.Tensor:
-        # The RGB image contains both players. player_id remains an accepted part
-        # of the public API even though this shared policy does not need it.
+        # This legacy PPO example uses the newest RGB frame from the four-frame
+        # public history. player_id remains an accepted part of the API.
+        image = image[:, 9:12]
         logits, _ = self.actor_critic(image)
         # Keep player_id as a graph input for the fixed ONNX challenge API.
         return torch.argmax(logits, dim=1).to(torch.int64) + player_id * 0
@@ -80,7 +81,7 @@ def export_policy(model: ActorCritic, output: Path) -> None:
     """Export a deterministic (argmax) challenge policy."""
     output.parent.mkdir(parents=True, exist_ok=True)
     policy = ExportedPolicy(model.cpu()).eval()
-    example_image = torch.zeros((1, *OBSERVATION_SHAPE), dtype=torch.float32)
+    example_image = torch.zeros((1, 12, 210, 160), dtype=torch.float32)
     example_player_id = torch.ones((1,), dtype=torch.int64)
     export_kwargs = {
         "input_names": ["image", "player_id"],

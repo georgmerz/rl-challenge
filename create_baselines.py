@@ -11,7 +11,8 @@ import torch
 
 
 OUT_DIR = Path(__file__).resolve().parent / "baselines"
-IMAGE_SHAPE = (1, 3, 210, 160)
+# Four RGB frames, oldest to newest. The runner always supplies this history.
+IMAGE_SHAPE = (1, 12, 210, 160)
 
 NOOP = 0
 FIRE = 1
@@ -41,6 +42,8 @@ class PongTrackBallPolicy(torch.nn.Module):
     """
 
     def forward(self, image: torch.Tensor, player_id: torch.Tensor) -> torch.Tensor:
+        # The newest RGB frame is the last group of three channels.
+        image = image[:, 9:12]
         red, green, blue = image[:, 0], image[:, 1], image[:, 2]
         height = image.shape[2]
         y = torch.arange(height, device=image.device, dtype=torch.float32).reshape(1, height, 1)

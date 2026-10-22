@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import copy
 import inspect
+from collections import deque
 from pathlib import Path
 import gymnasium as gym
 import numpy as np
@@ -26,6 +27,7 @@ from torch.nn import functional as F
 
 
 MAX_EPISODE_STEPS = 1_000
+FRAME_STACK = 4
 
 
 class Player1VsPongBaselineEnv(gym.Env):
@@ -48,6 +50,7 @@ class Player1VsPongBaselineEnv(gym.Env):
         self.player_1: str | None = None
         self.player_2: str | None = None
         self.observations: dict[str, np.ndarray] | None = None
+        self.frame_history: dict[str, deque[np.ndarray]] | None = None
         self.episode_steps = 0
 
     def reset(self, *, seed=None, options=None):
@@ -56,14 +59,19 @@ class Player1VsPongBaselineEnv(gym.Env):
         # pong_v3: first_0 = right/green, second_0 = left/orange.
         self.player_2, self.player_1 = self.env.possible_agents
         self.observations = observations
+        self.frame_history = {
+            name: deque([observations[name].copy()] * FRAME_STACK, maxlen=FRAME_STACK)
+            for name in self.env.possible_agents
+        }
         self.episode_steps = 0
         return observations[self.player_1], {}
 
     def step(self, action: int):
-        if self.player_1 is None or self.player_2 is None or self.observations is None:
+        if self.player_1 is None or self.player_2 is None or self.observations is None or self.frame_history is None:
             raise RuntimeError("reset() muss vor step() aufgerufen werden.")
         opponent_image = np.ascontiguousarray(
-            self.observations[self.player_2].transpose(2, 0, 1)[None], dtype=np.float32
+            np.stack(self.frame_history[self.player_2]).transpose(0, 3, 1, 2).reshape(1, 12, 210, 160),
+            dtype=np.float32,
         ) / 255.0
         opponent_action = int(
             np.asarray(
@@ -79,6 +87,9 @@ class Player1VsPongBaselineEnv(gym.Env):
         }
         observations, rewards, terminations, truncations, infos = self.env.step(actions)
         self.observations = observations
+        for name in self.env.possible_agents:
+            if name in observations:
+                self.frame_history[name].append(observations[name])
         self.episode_steps += 1
         # The tournament starts a fresh round as soon as somebody scores.
         # The technical cap keeps DQN episodes bounded; a timeout is neutral.
@@ -112,6 +123,22 @@ class PlayingFieldObservation(gym.ObservationWrapper):
     def observation(self, observation: np.ndarray) -> np.ndarray:
         # The playable field is rows 34 through 193 in the 210 x 160 Atari frame.
         return observation[34:194, :, :]
+
+
+class StackFramesAsChannels(gym.ObservationWrapper):
+    """Turn Gymnasium's [time, height, width, channel] stack into HWC."""
+
+    def __init__(self, env: gym.Env):
+        super().__init__(env)
+        stack, height, width, channels = env.observation_space.shape
+        self.observation_space = spaces.Box(0, 255, shape=(height, width, stack * channels), dtype=np.uint8)
+
+    def observation(self, observation: np.ndarray) -> np.ndarray:
+        # FrameStackObservation returns oldest-to-newest frames. Keep that
+        # order as four image channels for the standard Atari CNN.
+        return observation.transpose(1, 2, 0, 3).reshape(
+            observation.shape[1], observation.shape[2], -1
+        )
 
 
 class SmallCNN(BaseFeaturesExtractor):
@@ -148,12 +175,11 @@ class ChallengeDQNPolicy(nn.Module):
         self.q_net = copy.deepcopy(q_net).cpu()
 
     def forward(self, image: torch.Tensor, player_id: torch.Tensor) -> torch.Tensor:
-        # The public input is normalized, whereas SB3's CnnPolicy receives
-        # uint8 images and normalizes them internally. Convert back to that
-        # expected scale before passing data into the untouched Q-network.
-        # The DQN trains on the cropped 64 x 64 playing field; this
-        # preprocessing becomes part of the portable ONNX model.
-        image = image[:, :, 34:194, :] * 255.0
+        # Four RGB frames arrive as twelve channels (oldest to newest). Match
+        # the Atari-style training preprocessing: crop, grayscale and resize.
+        batch = image.shape[0]
+        frames = image.reshape(batch, FRAME_STACK, 3, 210, 160)[:, :, :, 34:194, :]
+        image = (0.299 * frames[:, :, 0] + 0.587 * frames[:, :, 1] + 0.114 * frames[:, :, 2]) * 255.0
         image = F.interpolate(image, size=(64, 64), mode="bilinear", align_corners=False)
         q_values = self.q_net(image)
         # Keep player_id as a graph input for the fixed ONNX challenge API.
@@ -163,7 +189,7 @@ class ChallengeDQNPolicy(nn.Module):
 def export_challenge_policy(model: DQN, output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     policy = ChallengeDQNPolicy(model.policy.q_net).eval()
-    image = torch.zeros((1, 3, 210, 160), dtype=torch.float32)
+    image = torch.zeros((1, 12, 210, 160), dtype=torch.float32)
     player_id = torch.ones((1,), dtype=torch.int64)
     temporary_output = output.with_suffix(".tmp.onnx")
     export_kwargs = {
@@ -236,9 +262,12 @@ def evaluate_deterministic(model: DQN, episodes: int) -> None:
 
 
 def make_dqn_env() -> gym.Env:
-    """Crop and resize images so DQN's replay buffer fits in Colab RAM."""
+    """Atari-style crop, grayscale, resize and four-frame stack."""
     env = PlayingFieldObservation(Player1VsPongBaselineEnv())
-    return gym.wrappers.ResizeObservation(env, (64, 64))
+    env = gym.wrappers.ResizeObservation(env, (64, 64))
+    env = gym.wrappers.GrayscaleObservation(env, keep_dim=True)
+    env = gym.wrappers.FrameStackObservation(env, FRAME_STACK)
+    return StackFramesAsChannels(env)
 
 
 class DoubleDQN(DQN):

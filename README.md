@@ -38,20 +38,20 @@ oder gestoppt werden.
 
 ## Beobachtungen
 
-Bei jedem Schritt erhält das Modell genau einen aktuellen Atari-Frame und die
-eigene Rolle. Es gibt **keine** Spielhistorie und keinen Zugriff auf das
+Bei jedem Schritt erhält das Modell die letzten **vier** Atari-Frames (vom
+ältesten zum neuesten) und die eigene Rolle. Es gibt keinen Zugriff auf das
 Environment, den Punktestand oder die gegnerischen Aktionen.
 
 | Eingabe | Typ und Form | Bedeutung |
 | --- | --- | --- |
-| `image` | `float32`, `[1, 3, 210, 160]` | RGB-Bild im NCHW-Format, Pixelwerte bereits auf `[0, 1]` normiert. |
+| `image` | `float32`, `[1, 12, 210, 160]` | Vier RGB-Bilder im NCHW-Format: Kanäle 0–2 sind der älteste, 9–11 der neueste Frame. Pixelwerte sind auf `[0, 1]` normiert. |
 | `player_id` | `int64`, `[1]` | `1`: linker/oranger Schläger, `2`: rechter/grüner Schläger. |
 
-Das Originalbild hat die Form `210 × 160 × 3` in H×B×RGB. Der Runner
-wandelt es in NCHW um und fragt immer genau einen Frame ab. Der Ball und beide
-Schläger sind sichtbar. Für eine stärkere Strategie müsste man aus dem Ball
-und seinen Bildmerkmalen abschätzen, wohin er fliegt; die feste öffentliche
-Modell-Schnittstelle enthält jedoch absichtlich nur einen Frame.
+Jeder Originalframe hat die Form `210 × 160 × 3` in H×B×RGB. Der Runner
+wandelt vier aufeinanderfolgende Frames in NCHW um und stapelt sie als zwölf
+Kanäle. Der Ball und beide Schläger sind sichtbar. Dadurch kann eine Policy
+aus der Ballbewegung die ungefähre Flugrichtung lernen. Beim Start einer Runde
+werden zunächst vier gleiche Startframes geliefert.
 
 ## Aktionen
 
@@ -78,7 +78,7 @@ Reicht genau **eine** `.onnx`-Datei ein, höchstens 250 MB groß. Sie muss mit
 ONNX-Opset 17 exportiert sein und exakt diese Schnittstelle haben:
 
 ```text
-image:      float32 [1, 3, 210, 160]
+image:      float32 [1, 12, 210, 160]  (4 RGB-Frames, ältester zuerst)
 player_id:  int64 [1]
 action:     int64 [1], Wert aus {0, 1, 2, 3, 4, 5}
 ```
@@ -127,10 +127,10 @@ deterministische, bildbasierte Beispielpolicy und kein trainiertes Modell.
 [Stable-Baselines3](https://stable-baselines3.readthedocs.io/). Sie verwendet
 ohne eigene Algorithmusänderungen Standard-`DQN` mit Standard-`CnnPolicy` und trainiert
 nur Spieler 1 (links/orange) gegen die feste
-`baseline_pong_track_ball.onnx`. Ein kleiner CNN-Encoder erhält den
-Spielfeld-Ausschnitt, verkleinert auf `84 × 84`; beim Export ist dieselbe
-Vorverarbeitung im ONNX-Modell enthalten. Die öffentliche Schnittstelle bleibt
-also unverändert.
+`baseline_pong_track_ball.onnx`. Es reproduziert die üblichen Atari-DQN-
+Vorverarbeitungsschritte: Spielfeld-Ausschnitt, Graustufen, `84 × 84` und vier
+gestapelte Frames. Beim Export ist dieselbe Vorverarbeitung im ONNX-Modell
+enthalten.
 
 Pong liefert beim Punkt bereits den echten Lernreward `+1` (gewonnen) bzw.
 `-1` (verloren); ein Trainings-Timeout liefert `0`. Die Evaluation zählt die
@@ -138,9 +138,18 @@ deterministische ONNX-Policy gegen denselben Gegner. Diese Gewinn-/Verlustzahl
 ist wichtiger als ein einzelner Loss-Wert.
 
 ```bash
-python train_dqn_vanilla.py --timesteps 500000 \
+python train_dqn_vanilla.py --timesteps 1000000 \
   --output baselines/baseline_pong_dqn.onnx
 ```
+
+Die Vorlage übernimmt die zentralen Schritte des
+[CleanRL-Atari-DQN-Beispiels](https://docs.cleanrl.dev/rl-algorithms/dqn/):
+Graustufen, 84×84 Pixel, vier Frames, Replay-Buffer, Target-Netz und
+Epsilon-Greedy-Exploration. CleanRL trainiert Atari Pong für **10 Millionen
+Entscheidungsschritte** (bei Frame-Skip 4 sind das 40 Millionen Rohframes).
+Für dieses einfachere Duell gegen eine feste Baseline ist 1 Million Schritte
+ein sinnvoller erster Colab-Lauf; 20.000 Schritte testen nur Installation und
+Export.
 
 Das Skript exportiert standardmäßig nach jeweils 1.000 Schritten einen
 Checkpoint. Ein Testlauf prüft nur die Technik, nicht die Spielstärke:
@@ -166,7 +175,7 @@ Auf Apple Silicon verwendet das Skript automatisch MPS, in Colab CUDA und
 sonst CPU. CPU kann bei Bedarf erzwungen werden:
 
 ```bash
-python train_dqn_vanilla.py --device cpu --timesteps 500000
+python train_dqn_vanilla.py --device cpu --timesteps 1000000
 ```
 
 ## Kleinstes exportierbares Modell
@@ -183,7 +192,7 @@ class Policy(torch.nn.Module):
 
 
 policy = Policy().eval()
-image = torch.zeros((1, 3, 210, 160), dtype=torch.float32)
+image = torch.zeros((1, 12, 210, 160), dtype=torch.float32)
 player_id = torch.ones((1,), dtype=torch.int64)
 torch.onnx.export(
     policy, (image, player_id), "my_policy.onnx",

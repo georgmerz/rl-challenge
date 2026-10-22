@@ -6,6 +6,7 @@ import os
 import threading
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,6 +20,8 @@ UPLOAD_DIR = BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 MAX_MODEL_BYTES = 250 * 1024 * 1024
 ACTION_COUNT = 6
+FRAME_STACK = 4
+MODEL_CHANNELS = FRAME_STACK * 3
 TOTAL_ROUNDS = 10
 # A Pong rally can theoretically take a very long time. It is a draw after
 # this many frames, so every tournament round always finishes predictably.
@@ -42,8 +45,8 @@ def load_onnx_model(path: Path) -> ort.InferenceSession:
     inputs = {item.name: item for item in session.get_inputs()}
     if set(inputs) != {"image", "player_id"}:
         raise ValueError("Das ONNX-Modell benötigt genau die Eingaben `image` und `player_id`.")
-    if inputs["image"].type != "tensor(float)" or list(inputs["image"].shape) != [1, 3, 210, 160]:
-        raise ValueError("`image` muss float32 mit der Form [1, 3, 210, 160] sein.")
+    if inputs["image"].type != "tensor(float)" or list(inputs["image"].shape) != [1, MODEL_CHANNELS, 210, 160]:
+        raise ValueError(f"`image` muss float32 mit der Form [1, {MODEL_CHANNELS}, 210, 160] sein.")
     if inputs["player_id"].type != "tensor(int64)" or list(inputs["player_id"].shape) != [1]:
         raise ValueError("`player_id` muss int64 mit der Form [1] sein.")
     outputs = session.get_outputs()
@@ -64,14 +67,19 @@ class ModelAgent:
         self.model = load_onnx_model(path)
 
     @staticmethod
-    def _image_tensor(image: np.ndarray) -> np.ndarray:
-        if not isinstance(image, np.ndarray) or image.shape != (210, 160, 3):
-            raise ValueError(f"Erwartet wird ein Bild der Form (210, 160, 3), erhalten: {image.shape}")
-        # Public API: uint8 HWC. Model API: float32 NCHW, values in [0, 1].
-        return np.ascontiguousarray(image.transpose(2, 0, 1)[None], dtype=np.float32) / 255.0
+    def _image_tensor(frames: np.ndarray) -> np.ndarray:
+        if not isinstance(frames, np.ndarray) or frames.shape != (FRAME_STACK, 210, 160, 3):
+            raise ValueError(
+                f"Erwartet werden {FRAME_STACK} Bilder der Form (210, 160, 3), erhalten: {frames.shape}"
+            )
+        # Public API: four uint8 HWC frames, oldest to newest. Model API:
+        # float32 NCHW with 12 channels, values in [0, 1].
+        return np.ascontiguousarray(
+            frames.transpose(0, 3, 1, 2).reshape(1, MODEL_CHANNELS, 210, 160), dtype=np.float32
+        ) / 255.0
 
-    def act(self, image: np.ndarray, player_id: int) -> int:
-        image_tensor = self._image_tensor(image)
+    def act(self, frames: np.ndarray, player_id: int) -> int:
+        image_tensor = self._image_tensor(frames)
         player_tensor = np.asarray([player_id], dtype=np.int64)
         output = np.asarray(self.model.run(["action"], {"image": image_tensor, "player_id": player_tensor})[0])
         if output.size != 1:
@@ -180,6 +188,9 @@ class GameSession:
                 raise RuntimeError(f"Unerwartete Agentenzahl: {names}")
             right_name, left_name = names[0], names[1]
             player_id_by_name = {left_name: 1, right_name: 2}
+            frame_history = {
+                name: deque([observations[name].copy()] * FRAME_STACK, maxlen=FRAME_STACK) for name in names
+            }
             score = {"Spieler 1": 0, "Spieler 2": 0}
             round_seed = 42
             round_number = 1
@@ -219,9 +230,11 @@ class GameSession:
                     break
                 actions = {}
                 for name in names:
-                    image = observations[name]
-                    actions[name] = agents[name].act(image, player_id_by_name[name])
+                    actions[name] = agents[name].act(np.stack(frame_history[name]), player_id_by_name[name])
                 observations, rewards, terminations, truncations, infos = env.step(actions)
+                for name in names:
+                    if name in observations:
+                        frame_history[name].append(observations[name])
                 round_steps += 1
                 frame = env.render()
                 # Pong rewards the player that scores with +1 and the other
@@ -255,6 +268,9 @@ class GameSession:
                     round_number += 1
                     round_steps = 0
                     observations, infos = env.reset(seed=round_seed)
+                    frame_history = {
+                        name: deque([observations[name].copy()] * FRAME_STACK, maxlen=FRAME_STACK) for name in names
+                    }
                     agents, competitor_by_name = set_round_players()
                     with self.lock:
                         self.state.frame = encode_frame(env.render())
