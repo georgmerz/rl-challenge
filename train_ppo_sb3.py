@@ -1,6 +1,6 @@
 """Minimal PPO example for player 1 (green/left) in Atari Surround.
 
-The agent always plays player 1 against the fixed ``baseline_straight``
+The agent always plays player 1 against the fixed ``baseline_wall_avoid``
 opponent. The trained policy
 is exported to the challenge's portable ONNX ``.onnx`` format.
 
@@ -25,15 +25,11 @@ from stable_baselines3.common.env_util import make_vec_env
 from torch import nn
 
 
-MAX_EPISODE_STEPS = 500
-# Without a small cost for time, both straight-moving players can produce an
-# endless round with reward zero. This shaping is used only for training; the
-# tournament runner keeps its original scoring rules.
-STEP_PENALTY = -0.01
+MAX_EPISODE_STEPS = 1_000
 
 
-class Player1VsStraightEnv(gym.Env):
-    """Player 1 (left/green) versus the right/blue straight baseline."""
+class Player1VsWallAvoidEnv(gym.Env):
+    """Player 1 (left/green) versus the exact ONNX wall-avoid baseline."""
 
     metadata = {"render_modes": []}
 
@@ -41,10 +37,17 @@ class Player1VsStraightEnv(gym.Env):
         from pettingzoo.atari import surround_v2
 
         self.env = surround_v2.parallel_env(render_mode=None)
+        import onnxruntime as ort
+
+        opponent_path = Path(__file__).resolve().parent / "baselines" / "baseline_wall_avoid.onnx"
+        if not opponent_path.is_file():
+            raise FileNotFoundError(f"Gegnerdatei fehlt: {opponent_path}")
+        self.opponent = ort.InferenceSession(str(opponent_path), providers=["CPUExecutionProvider"])
         self.observation_space = spaces.Box(0, 255, shape=(210, 160, 3), dtype=np.uint8)
         self.action_space = spaces.Discrete(5)
         self.player_1: str | None = None
         self.player_2: str | None = None
+        self.observations: dict[str, np.ndarray] | None = None
         self.episode_steps = 0
 
     def reset(self, *, seed=None, options=None):
@@ -52,24 +55,34 @@ class Player1VsStraightEnv(gym.Env):
         observations, _ = self.env.reset(seed=seed)
         # surround_v2: first_0 = right/blue, second_0 = left/green.
         self.player_2, self.player_1 = self.env.possible_agents
+        self.observations = observations
         self.episode_steps = 0
         return observations[self.player_1], {}
 
     def step(self, action: int):
-        if self.player_1 is None or self.player_2 is None:
+        if self.player_1 is None or self.player_2 is None or self.observations is None:
             raise RuntimeError("reset() muss vor step() aufgerufen werden.")
+        opponent_image = np.ascontiguousarray(
+            self.observations[self.player_2].transpose(2, 0, 1)[None], dtype=np.float32
+        ) / 255.0
+        opponent_action = int(
+            np.asarray(
+                self.opponent.run(
+                    ["action"],
+                    {"image": opponent_image, "player_id": np.asarray([2], dtype=np.int64)},
+                )[0]
+            ).reshape(-1)[0]
+        )
         actions = {
             self.player_1: int(action),
-            # This is exactly baseline_straight.onnx for player_id=2: the
-            # right/blue player always moves left.
-            self.player_2: 3,
+            self.player_2: opponent_action,
         }
         observations, rewards, terminations, truncations, infos = self.env.step(actions)
+        self.observations = observations
         self.episode_steps += 1
         # The tournament starts a fresh round as soon as somebody scores.
-        # End the Gymnasium episode here as well. A capped episode and the
-        # small per-step cost prevent the no-action loop from looking good to
-        # PPO merely because it survives forever.
+        # The technical cap keeps PPO rollouts bounded. It does not change the
+        # tournament reward: a timeout has reward 0.
         point_scored = any(reward != 0 for reward in rewards.values())
         natural_end = bool(terminations.get(self.player_1, False)) or bool(truncations.get(self.player_1, False))
         timed_out = not (point_scored or natural_end) and self.episode_steps >= MAX_EPISODE_STEPS
@@ -86,7 +99,7 @@ class Player1VsStraightEnv(gym.Env):
         else:
             observation = observations[self.player_1]
         info = {"tournament_reward": tournament_reward, "timeout": timed_out, "draw": round_draw}
-        return observation, tournament_reward + STEP_PENALTY, terminated, truncated, info
+        return observation, tournament_reward, terminated, truncated, info
 
     def close(self) -> None:
         self.env.close()
@@ -190,7 +203,7 @@ def evaluate_deterministic(model: PPO, episodes: int) -> None:
     outcomes = {"win": 0, "loss": 0, "draw": 0, "timeout": 0}
     actions = np.zeros(5, dtype=np.int64)
     for seed in range(episodes):
-        env = Player1VsStraightEnv()
+        env = Player1VsWallAvoidEnv()
         try:
             observation, _ = env.reset(seed=90_000 + seed)
             while True:
@@ -213,7 +226,7 @@ def evaluate_deterministic(model: PPO, episodes: int) -> None:
         finally:
             env.close()
     print(
-        "Deterministische ONNX-Policy gegen baseline_straight: "
+        "Deterministische ONNX-Policy gegen baseline_wall_avoid: "
         f"Siege {outcomes['win']}, Niederlagen {outcomes['loss']}, "
         f"Unentschieden {outcomes['draw']}, Timeouts {outcomes['timeout']}; "
         f"Aktionen {actions.tolist()}"
@@ -254,7 +267,7 @@ def main() -> None:
     # Four independent games make each policy update contain substantially
     # more scoring situations than a single long game, while staying simple
     # enough for a laptop baseline.
-    env = make_vec_env(Player1VsStraightEnv, n_envs=args.n_envs, seed=42)
+    env = make_vec_env(Player1VsWallAvoidEnv, n_envs=args.n_envs, seed=42)
     try:
         model = PPO(
             "CnnPolicy",

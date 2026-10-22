@@ -195,15 +195,14 @@ sie gegen `baseline_wall_avoid` auf beiden Seiten.
 `train_ppo_sb3.py` verwendet die etablierte Bibliothek
 [Stable-Baselines3](https://stable-baselines3.readthedocs.io/) und trainiert
 eine CNN-Policy mit PPO. Dies ist absichtlich ein Minimalbeispiel: Die Policy
-trainiert nur als Spieler 1 auf der linken/grünen Seite gegen die feste
-`baseline_straight` (Spieler 2, rechts/blau, stets `LEFT`). Das CNN ist bewusst klein (etwa 50.000 Gewichte), damit Training
+trainiert nur als Spieler 1 auf der linken/grünen Seite gegen die feste,
+bildbasierte `baseline_wall_avoid` (Spieler 2, rechts/blau). Das CNN ist bewusst klein (etwa 50.000 Gewichte), damit Training
 und Experimentieren auf einem Laptop zügig bleiben. Nach dem Training wird
 automatisch eine turnierkompatible Datei exportiert.
 
-Eine Trainingsrunde ist auf 500 Schritte begrenzt und enthält eine kleine
-negative Schrittbelohnung. Damit ist eine endlose Geradeausfahrt keine gute
-Trainingsstrategie. Alle 5.000 Schritte druckt das Skript außerdem eine
-**deterministische** Evaluation gegen `baseline_straight`, einschließlich der
+Eine Trainingsrunde ist technisch auf 1.000 Schritte begrenzt; ein Timeout
+zählt dabei als neutraler Reward `0`, genau wie im Turnier. Alle 5.000 Schritte druckt das Skript außerdem eine
+**deterministische** Evaluation gegen `baseline_wall_avoid`, einschließlich der
 verwendeten Aktionen. Das entspricht der `argmax`-Policy, die als ONNX-Datei
 exportiert wird; der während PPO angezeigte Rollout-Reward allein genügt nicht
 als Qualitätsmaß.
