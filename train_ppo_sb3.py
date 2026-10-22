@@ -26,6 +26,11 @@ from torch.nn import functional as F
 
 
 MAX_EPISODE_STEPS = 1_000
+# Dense reward used only while training: remaining alive provides a small,
+# immediate signal; crashing is expensive. The tournament itself still uses
+# only its original +/- 1 point scoring.
+SURVIVAL_REWARD = 1.0
+DEATH_PENALTY = -100.0
 
 
 class Player1VsWallAvoidEnv(gym.Env):
@@ -99,7 +104,11 @@ class Player1VsWallAvoidEnv(gym.Env):
         else:
             observation = observations[self.player_1]
         info = {"tournament_reward": tournament_reward, "timeout": timed_out, "draw": round_draw}
-        return observation, tournament_reward, terminated, truncated, info
+        # A simultaneous crash is a draw in the tournament, but this player
+        # did physically crash, so it receives the training death penalty.
+        player_died = float(rewards.get(self.player_1, 0.0)) < 0 or round_draw
+        training_reward = DEATH_PENALTY if player_died else SURVIVAL_REWARD
+        return observation, training_reward, terminated, truncated, info
 
     def close(self) -> None:
         self.env.close()

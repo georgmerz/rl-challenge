@@ -201,11 +201,19 @@ und Experimentieren auf einem Laptop zügig bleiben. Nach dem Training wird
 automatisch eine turnierkompatible Datei exportiert.
 
 Eine Trainingsrunde ist technisch auf 1.000 Schritte begrenzt; ein Timeout
-zählt dabei als neutraler Reward `0`, genau wie im Turnier. Alle 5.000 Schritte druckt das Skript außerdem eine
+hat in der Turnierwertung den neutralen Wert `0`. Alle 5.000 Schritte druckt das Skript außerdem eine
 **deterministische** Evaluation gegen `baseline_wall_avoid`, einschließlich der
 verwendeten Aktionen. Das entspricht der `argmax`-Policy, die als ONNX-Datei
 exportiert wird; der während Double DQN angezeigte Trainings-Reward allein genügt nicht
 als Qualitätsmaß.
+
+Für das Double-DQN-Training wird ein dichter Lernreward verwendet: `+1` pro
+überlebtem Schritt und `-100` beim eigenen Crash. Das erleichtert die
+Kreditzuweisung bei Bilddaten, ist aber **nicht** die Turnierwertung. Die
+deterministische Evaluation und das Turnier bleiben bei den echten
+Punktresultaten (`+1` Sieg, `-1` Niederlage, Punkt für beide beim
+Unentschieden). Dadurch darf ein positiver Trainings-Reward nicht ohne die
+Gewinnrate interpretiert werden.
 
 Für Double DQN wird zuerst der statische Atari-Rand entfernt und das verbleibende
 Spielfeld von `160 × 160` auf `64 × 64` verkleinert, damit der Replay Buffer in
