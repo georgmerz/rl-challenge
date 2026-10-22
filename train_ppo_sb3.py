@@ -1,11 +1,11 @@
-"""Minimal DQN example for player 1 (green/left) in Atari Surround.
+"""Minimal Double-DQN example for player 1 (green/left) in Atari Surround.
 
 The agent always plays player 1 against the fixed ``baseline_wall_avoid``
 opponent. The trained policy
 is exported to the challenge's portable ONNX ``.onnx`` format.
 
 Example:
-    python train_ppo_sb3.py --timesteps 500000 --output baselines/baseline_dqn.onnx
+    python train_ppo_sb3.py --timesteps 500000 --output baselines/baseline_ddqn.onnx
 """
 
 from __future__ import annotations
@@ -105,8 +105,20 @@ class Player1VsWallAvoidEnv(gym.Env):
         self.env.close()
 
 
+class PlayingFieldObservation(gym.ObservationWrapper):
+    """Remove the static Atari border and score area before DQN training."""
+
+    def __init__(self, env: gym.Env):
+        super().__init__(env)
+        self.observation_space = spaces.Box(0, 255, shape=(160, 160, 3), dtype=np.uint8)
+
+    def observation(self, observation: np.ndarray) -> np.ndarray:
+        # The playable field is rows 34 through 193 in the 210 x 160 Atari frame.
+        return observation[34:194, :, :]
+
+
 class SmallCNN(BaseFeaturesExtractor):
-    """Small image encoder: about 50,000 trainable weights in total."""
+    """Compact image encoder for cropped 64 x 64 RGB observations."""
 
     def __init__(self, observation_space: spaces.Box, features_dim: int = 64) -> None:
         super().__init__(observation_space, features_dim)
@@ -116,14 +128,14 @@ class SmallCNN(BaseFeaturesExtractor):
             nn.ReLU(),
             nn.Conv2d(16, 32, kernel_size=3, stride=2),
             nn.ReLU(),
-            # The 84 x 84 training image becomes 9 x 9 after the convolutions.
-            # Fixed pooling makes a 4 x 4 output and is exportable on both
+            # The 64 x 64 training image becomes 7 x 7 after the convolutions.
+            # Fixed pooling makes a 3 x 3 output and is exportable on both
             # older local PyTorch versions and current Colab.
             nn.AvgPool2d(kernel_size=3, stride=2),
             nn.Flatten(),
         )
         self.linear = nn.Sequential(
-            nn.Linear(32 * 4 * 4, features_dim),
+            nn.Linear(32 * 3 * 3, features_dim),
             nn.ReLU(),
         )
 
@@ -132,7 +144,7 @@ class SmallCNN(BaseFeaturesExtractor):
 
 
 class ChallengeDQNPolicy(nn.Module):
-    """Turn an SB3 DQN Q-network into the challenge's two-input API."""
+    """Turn an SB3 Double-DQN Q-network into the challenge's ONNX API."""
 
     def __init__(self, q_net: nn.Module) -> None:
         super().__init__()
@@ -141,9 +153,10 @@ class ChallengeDQNPolicy(nn.Module):
     def forward(self, image: torch.Tensor, player_id: torch.Tensor) -> torch.Tensor:
         # ``image`` is already normalized exactly as SB3's image
         # preprocessing would normalize the uint8 training observations. The
-        # DQN trains on compact 84 x 84 frames; this resize becomes part of
+        # DQN trains on the cropped 64 x 64 playing field; this preprocessing becomes part of
         # the portable ONNX model, while its public input remains 210 x 160.
-        image = F.interpolate(image, size=(84, 84), mode="bilinear", align_corners=False)
+        image = image[:, :, 34:194, :]
+        image = F.interpolate(image, size=(64, 64), mode="bilinear", align_corners=False)
         q_values = self.q_net(image)
         # Keep player_id as a graph input for the fixed ONNX challenge API.
         return torch.argmax(q_values, dim=1).to(torch.int64) + player_id * 0
@@ -167,7 +180,7 @@ def export_challenge_policy(model: DQN, output: Path) -> None:
 
 
 class ExportCallback(BaseCallback):
-    """Overwrite the challenge model with the latest DQN every N steps."""
+    """Overwrite the challenge model with the latest Double-DQN every N steps."""
 
     def __init__(self, output: Path, every_steps: int, eval_every_steps: int, eval_episodes: int) -> None:
         super().__init__()
@@ -225,14 +238,44 @@ def evaluate_deterministic(model: DQN, episodes: int) -> None:
 
 
 def make_dqn_env() -> gym.Env:
-    """Use compact observations so DQN's replay buffer fits in Colab RAM."""
-    return gym.wrappers.ResizeObservation(Player1VsWallAvoidEnv(), (84, 84))
+    """Crop and resize images so DQN's replay buffer fits in Colab RAM."""
+    env = PlayingFieldObservation(Player1VsWallAvoidEnv())
+    return gym.wrappers.ResizeObservation(env, (64, 64))
+
+
+class DoubleDQN(DQN):
+    """DQN with Double-DQN targets.
+
+    The online network selects the next action; the target network evaluates
+    it. This prevents the optimistic value bias of the standard max-target.
+    """
+
+    def train(self, gradient_steps: int, batch_size: int = 100) -> None:
+        self.policy.set_training_mode(True)
+        self._update_learning_rate(self.policy.optimizer)
+        losses = []
+        for _ in range(gradient_steps):
+            replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)
+            with torch.no_grad():
+                next_actions = self.q_net(replay_data.next_observations).argmax(dim=1, keepdim=True)
+                next_q_values = self.q_net_target(replay_data.next_observations).gather(1, next_actions)
+                target_q_values = replay_data.rewards + (1 - replay_data.dones) * self.gamma * next_q_values
+            current_q_values = self.q_net(replay_data.observations).gather(1, replay_data.actions.long())
+            loss = F.smooth_l1_loss(current_q_values, target_q_values)
+            losses.append(loss.item())
+            self.policy.optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
+            self.policy.optimizer.step()
+        self._n_updates += gradient_steps
+        self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
+        self.logger.record("train/loss", np.mean(losses))
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train a Stable-Baselines3 DQN baseline for Atari Surround.")
+    parser = argparse.ArgumentParser(description="Train a Stable-Baselines3 Double-DQN baseline for Atari Surround.")
     parser.add_argument("--timesteps", type=int, default=500_000, help="Training steps (default: 500000).")
-    parser.add_argument("--output", default="baselines/baseline_dqn.onnx", help="Output path for the exported ONNX challenge model.")
+    parser.add_argument("--output", default="baselines/baseline_ddqn.onnx", help="Output path for the exported ONNX challenge model.")
     parser.add_argument("--export-every", type=int, default=1_000, help="Checkpoint-Export nach N Schritten (Standard: 1000).")
     parser.add_argument("--eval-every", type=int, default=5_000, help="Deterministische Evaluation nach N Schritten (Standard: 5000).")
     parser.add_argument("--eval-episodes", type=int, default=5, help="Runden pro deterministischer Evaluation (Standard: 5).")
@@ -256,7 +299,7 @@ def main() -> None:
         raise ValueError("--timesteps, --export-every, --eval-every und --eval-episodes müssen positiv sein.")
     env = make_dqn_env()
     try:
-        model = DQN(
+        model = DoubleDQN(
             "CnnPolicy",
             env,
             policy_kwargs={
@@ -287,7 +330,7 @@ def main() -> None:
         )
         export_challenge_policy(model, output)
         evaluate_deterministic(model, args.eval_episodes)
-        print(f"DQN-Baseline exportiert nach {output}")
+        print(f"Double-DQN-Baseline exportiert nach {output}")
     finally:
         env.close()
 

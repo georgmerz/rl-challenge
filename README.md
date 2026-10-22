@@ -118,7 +118,7 @@ torch.onnx.export(
 )
 ```
 
-Die DQN-Vorlage und das Colab-Notebook erzeugen dieses Format automatisch.
+Die Double-DQN-Vorlage und das Colab-Notebook erzeugen dieses Format automatisch.
 Die Policy darf in `forward` weder `"mps"` noch `"cuda"` fest eintragen und
 keine GPU voraussetzen. Neue Tensoren müssen auf dem Gerät der Eingabe erzeugt
 werden, zum Beispiel mit `device=image.device`.
@@ -190,11 +190,11 @@ Sie ist kein gelerntes Modell, sondern ein kompaktes Beispiel dafür, wie ein
 ONNX-Modell auf den Bildinhalt reagieren kann. Im lokalen Referenztest gewinnt
 sie gegen `baseline_wall_avoid` auf beiden Seiten.
 
-### DQN-Baseline gegen Wall Avoid trainieren
+### Double-DQN-Baseline gegen Wall Avoid trainieren
 
 `train_ppo_sb3.py` verwendet die etablierte Bibliothek
 [Stable-Baselines3](https://stable-baselines3.readthedocs.io/) und trainiert
-eine CNN-Policy mit DQN. Dies ist absichtlich ein Minimalbeispiel: Die Policy
+eine CNN-Policy mit Double DQN. Dies ist absichtlich ein Minimalbeispiel: Die Policy
 trainiert nur als Spieler 1 auf der linken/grünen Seite gegen die feste,
 bildbasierte `baseline_wall_avoid` (Spieler 2, rechts/blau). Das CNN ist bewusst klein (etwa 50.000 Gewichte), damit Training
 und Experimentieren auf einem Laptop zügig bleiben. Nach dem Training wird
@@ -204,16 +204,17 @@ Eine Trainingsrunde ist technisch auf 1.000 Schritte begrenzt; ein Timeout
 zählt dabei als neutraler Reward `0`, genau wie im Turnier. Alle 5.000 Schritte druckt das Skript außerdem eine
 **deterministische** Evaluation gegen `baseline_wall_avoid`, einschließlich der
 verwendeten Aktionen. Das entspricht der `argmax`-Policy, die als ONNX-Datei
-exportiert wird; der während DQN angezeigte Trainings-Reward allein genügt nicht
+exportiert wird; der während Double DQN angezeigte Trainings-Reward allein genügt nicht
 als Qualitätsmaß.
 
-Für DQN werden die Bilder im Training auf `84 × 84` verkleinert, damit der
-Replay Buffer in Colab-Speicher passt. Beim Export wird dieselbe Verkleinerung
+Für Double DQN wird zuerst der statische Atari-Rand entfernt und das verbleibende
+Spielfeld von `160 × 160` auf `64 × 64` verkleinert, damit der Replay Buffer in
+Colab-Speicher passt. Beim Export werden dieselben Schritte
 als ONNX-Operation in das Modell eingebaut; die Turnier-Schnittstelle bleibt
 unverändert bei RGB-Bildern der Form `[1, 3, 210, 160]`.
 
 ```bash
-python train_ppo_sb3.py --timesteps 500000 --output baselines/baseline_dqn.onnx
+python train_ppo_sb3.py --timesteps 500000 --output baselines/baseline_ddqn.onnx
 ```
 
 ### Training in Google Colab
@@ -224,10 +225,10 @@ werden: [In Google Colab starten](https://colab.research.google.com/github/georg
 Vor dem Ausführen in Colab unter **Runtime → Change runtime type** möglichst
 **T4 GPU** auswählen. Mit **Run all** werden Repository und Abhängigkeiten
 installiert und das Training gestartet. Der jeweils aktuelle Export liegt in
-`baselines/baseline_dqn.onnx` und wird im letzten Notebook-Schritt
+`baselines/baseline_ddqn.onnx` und wird im letzten Notebook-Schritt
 heruntergeladen.
 
-Die DQN-Baseline verwendet beim Export ONNX-Opset 17. Dadurch wird die Datei
+Die Double-DQN-Baseline verwendet beim Export ONNX-Opset 17. Dadurch wird die Datei
 unabhängig von der PyTorch-Version des Trainingssystems auf dem Referenz-Mac
 mit ONNX Runtime ausgeführt.
 
@@ -239,13 +240,13 @@ verwendet. Falls nötig, lässt sich die CPU erzwingen:
 python train_ppo_sb3.py --device cpu --timesteps 500000
 ```
 
-Das Skript überschreibt `baselines/baseline_dqn.onnx` automatisch nach jeweils
+Das Skript überschreibt `baselines/baseline_ddqn.onnx` automatisch nach jeweils
 1.000 Trainingsschritten. Dadurch kann das bis dahin trainierte Modell bereits
 während des laufenden Trainings im Turnier-Runner getestet werden. Der Abstand
 kann bei Bedarf geändert werden:
 
 ```bash
-python train_ppo_sb3.py --export-every 500 --output baselines/baseline_dqn.onnx
+python train_ppo_sb3.py --export-every 500 --output baselines/baseline_ddqn.onnx
 ```
 
 Für einen kurzen technischen Test verwendet das Skript mindestens einen
