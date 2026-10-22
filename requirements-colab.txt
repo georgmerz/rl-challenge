@@ -9,3 +9,4 @@ AutoROM[accept-rom-license]>=0.6
 stable-baselines3>=2.3,<3
 onnx>=1.18,<1.19
 onnxruntime>=1.16
+opencv-python-headless>=4.8
