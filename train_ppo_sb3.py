@@ -10,12 +10,14 @@ Example:
 from __future__ import annotations
 
 import argparse
+import copy
 from pathlib import Path
 import gymnasium as gym
 import numpy as np
 import torch
 from gymnasium import spaces
 from stable_baselines3 import PPO
+from stable_baselines3.common.callbacks import BaseCallback
 from torch import nn
 
 
@@ -80,24 +82,45 @@ class ChallengePolicy(nn.Module):
 
 def export_challenge_policy(model: PPO, output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
-    policy = ChallengePolicy(model.policy.cpu().eval())
+    # Exporting a copy avoids moving the policy away from a GPU while training.
+    policy = ChallengePolicy(copy.deepcopy(model.policy).cpu().eval())
     image = torch.zeros((1, 3, 210, 160), dtype=torch.float32)
     player_id = torch.ones((1,), dtype=torch.int64)
     exported = torch.export.export(policy, (image, player_id))
-    torch.export.save(exported, str(output))
+    temporary_output = output.with_suffix(".tmp.pt2")
+    torch.export.save(exported, str(temporary_output))
+    temporary_output.replace(output)
+
+
+class ExportCallback(BaseCallback):
+    """Overwrite the challenge model with the latest policy every N steps."""
+
+    def __init__(self, output: Path, every_steps: int) -> None:
+        super().__init__()
+        self.output = output
+        self.every_steps = every_steps
+        self.next_export = every_steps
+
+    def _on_step(self) -> bool:
+        if self.num_timesteps >= self.next_export:
+            export_challenge_policy(self.model, self.output)
+            print(f"Checkpoint exportiert nach {self.num_timesteps} Schritten: {self.output}")
+            self.next_export += self.every_steps
+        return True
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train a Stable-Baselines3 PPO baseline for Atari Surround.")
     parser.add_argument("--timesteps", type=int, default=100_000, help="Training steps (default: 100000).")
     parser.add_argument("--output", default="baselines/baseline_ppo.pt2", help="Output path for the exported challenge model.")
+    parser.add_argument("--export-every", type=int, default=1_000, help="Checkpoint-Export nach N Schritten (Standard: 1000).")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    if args.timesteps <= 0:
-        raise ValueError("--timesteps muss positiv sein.")
+    if args.timesteps <= 0 or args.export_every <= 0:
+        raise ValueError("--timesteps und --export-every müssen positiv sein.")
     env = Player1VsRandomEnv()
     try:
         model = PPO(
@@ -109,8 +132,12 @@ def main() -> None:
             verbose=1,
             seed=42,
         )
-        model.learn(total_timesteps=args.timesteps, progress_bar=False)
         output = Path(args.output)
+        model.learn(
+            total_timesteps=args.timesteps,
+            callback=ExportCallback(output, args.export_every),
+            progress_bar=False,
+        )
         export_challenge_policy(model, output)
         print(f"PPO-Baseline exportiert nach {output}")
     finally:

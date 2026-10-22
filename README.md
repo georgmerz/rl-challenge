@@ -153,6 +153,15 @@ exportiert.
 python train_ppo_sb3.py --timesteps 100000 --output baselines/baseline_ppo.pt2
 ```
 
+Das Skript überschreibt `baselines/baseline_ppo.pt2` automatisch nach jeweils
+1.000 Trainingsschritten. Dadurch kann das bis dahin trainierte Modell bereits
+während des laufenden Trainings im Turnier-Runner getestet werden. Der Abstand
+kann bei Bedarf geändert werden:
+
+```bash
+python train_ppo_sb3.py --export-every 500 --output baselines/baseline_ppo.pt2
+```
+
 Für einen kurzen technischen Test verwendet das Skript mindestens einen
 Rollout mit 128 Schritten; die so erzeugte Policy ist noch nicht sinnvoll
 trainiert:
