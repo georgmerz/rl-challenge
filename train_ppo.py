@@ -1,12 +1,12 @@
 """Train a small PPO self-play baseline for the Atari Surround challenge.
 
-The resulting ``.pt2`` file implements the public challenge interface:
+The resulting ``.onnx`` file implements the public challenge interface:
     image:     float32 [1, 3, 210, 160] in [0, 1]
     player_id: int64 [1]
     action:    int64 tensor containing one action in {0, ..., 4}
 
 Example:
-    python train_ppo.py --timesteps 100000 --output baselines/baseline_ppo.pt2
+    python train_ppo.py --timesteps 100000 --output baselines/baseline_ppo.onnx
 
 This is deliberately a compact educational baseline, not a tuned training
 pipeline. It uses one shared policy for both players and trains it in self-play.
@@ -65,7 +65,8 @@ class ExportedPolicy(nn.Module):
         # The RGB image contains both players. player_id remains an accepted part
         # of the public API even though this shared policy does not need it.
         logits, _ = self.actor_critic(image)
-        return torch.argmax(logits, dim=1).to(torch.int64)
+        # Keep player_id as a graph input for the fixed ONNX challenge API.
+        return torch.argmax(logits, dim=1).to(torch.int64) + player_id * 0
 
 
 def observation_batch(observations: dict[str, np.ndarray], agent_names: list[str], device: torch.device) -> torch.Tensor:
@@ -80,8 +81,14 @@ def export_policy(model: ActorCritic, output: Path) -> None:
     policy = ExportedPolicy(model.cpu()).eval()
     example_image = torch.zeros((1, *OBSERVATION_SHAPE), dtype=torch.float32)
     example_player_id = torch.ones((1,), dtype=torch.int64)
-    exported = torch.export.export(policy, (example_image, example_player_id))
-    torch.export.save(exported, str(output))
+    torch.onnx.export(
+        policy,
+        (example_image, example_player_id),
+        str(output),
+        input_names=["image", "player_id"],
+        output_names=["action"],
+        opset_version=17,
+    )
 
 
 def train(args: argparse.Namespace) -> Path:
@@ -209,7 +216,7 @@ def train(args: argparse.Namespace) -> Path:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train a PPO self-play policy for Atari Surround.")
     parser.add_argument("--timesteps", type=int, default=100_000, help="Anzahl der Environment-Schritte (Standard: 100000).")
-    parser.add_argument("--output", default="baselines/baseline_ppo.pt2", help="Zielpfad für das exportierte Modell.")
+    parser.add_argument("--output", default="baselines/baseline_ppo.onnx", help="Zielpfad für das exportierte ONNX-Modell.")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="cpu", help="z. B. cpu, mps oder cuda")
     parser.add_argument("--rollout-steps", type=int, default=128)

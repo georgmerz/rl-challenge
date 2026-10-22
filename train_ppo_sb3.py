@@ -1,10 +1,10 @@
 """Minimal PPO example for player 1 (green/left) in Atari Surround.
 
 The agent always plays player 1 against a random opponent. The trained policy
-is exported to the challenge's safe PyTorch ``.pt2`` format.
+is exported to the challenge's portable ONNX ``.onnx`` format.
 
 Example:
-    python train_ppo_sb3.py --timesteps 100000 --output baselines/baseline_ppo.pt2
+    python train_ppo_sb3.py --timesteps 100000 --output baselines/baseline_ppo.onnx
 """
 
 from __future__ import annotations
@@ -107,13 +107,14 @@ class ChallengePolicy(nn.Module):
 
     def forward(self, image: torch.Tensor, player_id: torch.Tensor) -> torch.Tensor:
         # SB3 normally performs image-space checks in Python before calling
-        # these modules. Calling the modules directly keeps torch.export free
+        # these modules. Calling the modules directly keeps ONNX export free
         # from those checks. ``image`` is already normalized exactly as SB3's
         # preprocessing would normalize the uint8 training observations.
         features = self.features_extractor(image)
         latent_pi = self.mlp_extractor.forward_actor(features)
         logits = self.action_net(latent_pi)
-        return torch.argmax(logits, dim=1).to(torch.int64)
+        # Keep player_id as a graph input for the fixed ONNX challenge API.
+        return torch.argmax(logits, dim=1).to(torch.int64) + player_id * 0
 
 
 def export_challenge_policy(model: PPO, output: Path) -> None:
@@ -125,12 +126,15 @@ def export_challenge_policy(model: PPO, output: Path) -> None:
     ).eval()
     image = torch.zeros((1, 3, 210, 160), dtype=torch.float32)
     player_id = torch.ones((1,), dtype=torch.int64)
-    temporary_output = output.with_suffix(".tmp.pt2")
-    # TorchScript is intentionally used here instead of torch.export: Colab
-    # regularly upgrades PyTorch, while the challenge runner may use an older
-    # local version. TorchScript keeps this baseline portable between both.
-    traced = torch.jit.trace(policy, (image, player_id), check_trace=False)
-    traced.save(str(temporary_output))
+    temporary_output = output.with_suffix(".tmp.onnx")
+    torch.onnx.export(
+        policy,
+        (image, player_id),
+        str(temporary_output),
+        input_names=["image", "player_id"],
+        output_names=["action"],
+        opset_version=17,
+    )
     temporary_output.replace(output)
 
 
@@ -154,7 +158,7 @@ class ExportCallback(BaseCallback):
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train a Stable-Baselines3 PPO baseline for Atari Surround.")
     parser.add_argument("--timesteps", type=int, default=100_000, help="Training steps (default: 100000).")
-    parser.add_argument("--output", default="baselines/baseline_ppo.pt2", help="Output path for the exported challenge model.")
+    parser.add_argument("--output", default="baselines/baseline_ppo.onnx", help="Output path for the exported ONNX challenge model.")
     parser.add_argument("--export-every", type=int, default=1_000, help="Checkpoint-Export nach N Schritten (Standard: 1000).")
     parser.add_argument(
         "--n-envs",

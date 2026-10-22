@@ -21,7 +21,7 @@ Unter Windows in PowerShell lautet die Aktivierung der virtuellen Umgebung
 `.venv\\Scripts\\Activate.ps1`; falls Port 5000 belegt ist, startet ihr mit
 `$env:PORT=5001; python app.py`.
 
-Wählt dort zwei `.pt2`-Modelle aus. Ein Duell besteht aus genau zehn Runden.
+Wählt dort zwei `.onnx`-Modelle aus. Ein Duell besteht aus genau zehn Runden.
 In Runde 1 startet Spieler 1 links (grün) und Spieler 2 rechts (blau); danach
 werden die Seiten in jeder Runde getauscht. Der Endstand nach zehn Runden
 entscheidet das Duell.
@@ -41,7 +41,7 @@ Wenn beide Figuren in derselben Runde gleichzeitig kollidieren, ist die Runde
 unentschieden und **beide Spieler erhalten einen Punkt**. Eine laufende Partie
 kann im Browser pausiert, fortgesetzt oder gestoppt werden.
 
-Ihr gebt ausschließlich eine exportierte PyTorch-Datei (`.pt2`) ab. Innerhalb
+Ihr gebt ausschließlich eine ONNX-Datei (`.onnx`) ab. Innerhalb
 des Modells dürft ihr Architektur, trainierte Gewichte und Bildverarbeitung
 frei wählen. Der Runner übergibt pro Spielschritt die Eingaben, ruft eure
 Methode `forward(image, player_id)` auf und führt die zurückgegebene Aktion
@@ -94,52 +94,54 @@ Runner abgewiesen.
 
 ## Abgabeformat
 
-Reicht genau **eine** Datei mit der Endung `.pt2` ein; sie darf maximal
-250 MB groß sein. Zulässig sind sichere PyTorch-Archive, die mit
-`torch.export.save` oder `torch.jit.trace(...).save(...)` erzeugt wurden.
-Pickle-basierte Exporte wie `torch.save(model, "model.pt")` akzeptiert der
-Runner bewusst nicht. Beim Laden setzt der Runner das Modell in den
-Auswertungsmodus (`eval()`), daher müssen alle zum Entscheiden nötigen
-Gewichte bereits in der exportierten Datei enthalten sein.
+Reicht genau **eine** Datei mit der Endung `.onnx` ein; sie darf maximal
+250 MB groß sein. Das Modell muss ONNX-Opset **17** verwenden und genau die
+Eingaben `image`, `player_id` sowie die Ausgabe `action` enthalten. Der Runner
+lädt das Modell ausschließlich mit ONNX Runtime auf CPU; Python- oder
+PyTorch-Archive wie `.pt`, `.pt2` oder Pickle-Dateien werden nicht akzeptiert.
 
 ### Plattformübergreifende Abgabe
 
 Trainiert werden darf auf Mac, Windows, Linux oder Google Colab. Für die
-Bewertung zählt aber ausschließlich, ob die exportierte Datei im
-Referenz-Runner der Lehrveranstaltung auf dem **Mac des Veranstalters** und
-dort auf der **CPU** läuft. Eine NVIDIA-GPU, Apple Silicon oder eine GPU
-überhaupt ist für das Turnier nicht erforderlich.
+Bewertung zählt aber ausschließlich, ob die ONNX-Datei im Referenz-Runner der
+Lehrveranstaltung auf dem **Mac des Veranstalters** und dort auf der **CPU**
+läuft. Eine NVIDIA-GPU, Apple Silicon oder eine GPU überhaupt ist für das
+Turnier nicht erforderlich.
 
-Für selbst entwickelte Modelle empfehlen wir ausdrücklich **TorchScript**:
+Exportiert ein PyTorch-Modell so:
 
 ```python
-traced = torch.jit.trace(policy.eval(), (image, player_id), check_trace=False)
-traced.save("model.pt2")
+torch.onnx.export(
+    policy.eval(), (image, player_id), "model.onnx",
+    input_names=["image", "player_id"], output_names=["action"],
+    opset_version=17,
+)
 ```
 
-Die PPO-Vorlage und das Colab-Notebook erzeugen dieses Format bereits
-automatisch. `torch.export.save` bleibt zulässig, kann sich zwischen
-unterschiedlichen PyTorch-Versionen aber ändern. Wer dieses Format verwendet,
-muss die exportierte Datei vor der Abgabe im Referenz-Runner testen.
-
+Die PPO-Vorlage und das Colab-Notebook erzeugen dieses Format automatisch.
 Die Policy darf in `forward` weder `"mps"` noch `"cuda"` fest eintragen und
 keine GPU voraussetzen. Neue Tensoren müssen auf dem Gerät der Eingabe erzeugt
-werden, zum Beispiel mit `device=image.device`. So funktionieren Modelle beim
-Training mit GPU und bei der Turnierauswertung auf CPU gleichermaßen.
+werden, zum Beispiel mit `device=image.device`.
 
-**Vorabtest der Teams:** Startet vor der Abgabe `python app.py`, ladet das
-eigene Modell zusammen mit `baselines/baseline_straight.pt2` hoch und startet
-eine Partie. Das verhindert die meisten Exportfehler, ersetzt aber nicht die
-finale Prüfung auf dem Referenz-Mac. Nur dort erfolgreich geladene Modelle
-gelten als abgabefähig.
+**Verbindlicher Vorabtest:** Vor der Abgabe ausführen:
+
+```bash
+python validate_submission.py model.onnx
+```
+
+Der Validator verwendet dieselbe CPU-ONNX-Laufzeit und prüft Dateiformat,
+Eingaben, Ausgabe und Aktionsbereich. Nur ein Modell mit `OK` ist abgabefähig.
 
 ## Festgelegte Modell-Schnittstelle
 
-Die Gruppe exportiert eine Policy beispielsweise als PyTorch-Exportdatei:
+Die Gruppe exportiert eine Policy als ONNX-Datei:
 
 ```python
-exported = torch.export.export(policy, (image, player_id))
-torch.export.save(exported, "model.pt2")
+torch.onnx.export(
+    policy.eval(), (image, player_id), "model.onnx",
+    input_names=["image", "player_id"], output_names=["action"],
+    opset_version=17,
+)
 ```
 
 Der Runner übergibt:
@@ -176,8 +178,8 @@ python create_baselines.py
 Erzeugt:
 
 ```text
-baselines/baseline_straight.pt2
-baselines/baseline_wall_avoid.pt2
+baselines/baseline_straight.onnx
+baselines/baseline_wall_avoid.onnx
 ```
 
 ### PPO-Selbstspiel-Baseline trainieren
@@ -191,7 +193,7 @@ und Experimentieren auf einem Laptop zügig bleiben. Nach dem Training wird
 automatisch eine turnierkompatible Datei exportiert.
 
 ```bash
-python train_ppo_sb3.py --timesteps 100000 --output baselines/baseline_ppo.pt2
+python train_ppo_sb3.py --timesteps 100000 --output baselines/baseline_ppo.onnx
 ```
 
 ### Training in Google Colab
@@ -202,12 +204,12 @@ werden: [In Google Colab starten](https://colab.research.google.com/github/georg
 Vor dem Ausführen in Colab unter **Runtime → Change runtime type** möglichst
 **T4 GPU** auswählen. Mit **Run all** werden Repository und Abhängigkeiten
 installiert und das Training gestartet. Der jeweils aktuelle Export liegt in
-`baselines/baseline_ppo.pt2` und wird im letzten Notebook-Schritt
+`baselines/baseline_ppo.onnx` und wird im letzten Notebook-Schritt
 heruntergeladen.
 
-Die PPO-Baseline verwendet beim Export TorchScript. Das Format bleibt zwischen
-der aktuellen Colab-Installation und älteren lokalen PyTorch-Versionen
-kompatibel.
+Die PPO-Baseline verwendet beim Export ONNX-Opset 17. Dadurch wird die Datei
+unabhängig von der PyTorch-Version des Trainingssystems auf dem Referenz-Mac
+mit ONNX Runtime ausgeführt.
 
 Auf einem Mac mit Apple Silicon verwendet das Skript automatisch den MPS-
 Beschleuniger des M-Chips; in Colab wird bei aktivierter GPU automatisch CUDA
@@ -217,13 +219,13 @@ verwendet. Falls nötig, lässt sich die CPU erzwingen:
 python train_ppo_sb3.py --device cpu --timesteps 100000
 ```
 
-Das Skript überschreibt `baselines/baseline_ppo.pt2` automatisch nach jeweils
+Das Skript überschreibt `baselines/baseline_ppo.onnx` automatisch nach jeweils
 1.000 Trainingsschritten. Dadurch kann das bis dahin trainierte Modell bereits
 während des laufenden Trainings im Turnier-Runner getestet werden. Der Abstand
 kann bei Bedarf geändert werden:
 
 ```bash
-python train_ppo_sb3.py --export-every 500 --output baselines/baseline_ppo.pt2
+python train_ppo_sb3.py --export-every 500 --output baselines/baseline_ppo.onnx
 ```
 
 Für einen kurzen technischen Test verwendet das Skript mindestens einen
@@ -231,7 +233,7 @@ Rollout mit 128 Schritten; die so erzeugte Policy ist noch nicht sinnvoll
 trainiert:
 
 ```bash
-python train_ppo_sb3.py --timesteps 128 --output baselines/test_ppo.pt2
+python train_ppo_sb3.py --timesteps 128 --output baselines/test_ppo.onnx
 ```
 
 Für ein echtes Turniermodell muss diese Vorlage erweitert werden, weil im
@@ -260,7 +262,9 @@ class Policy(torch.nn.Module):
         return torch.argmax(logits, dim=1).to(torch.int64)
 ```
 
-`player_id` darf in der Policy ignoriert werden, wenn das Modell die eigene Seite aus dem Bild ableitet. Die exportierte Methode muss ihn trotzdem als zweiten Parameter akzeptieren.
+`player_id` darf für die Entscheidung ignoriert werden, muss aber im ONNX-Graph
+erhalten bleiben. Falls er sonst nicht benötigt wird, addiert `player_id * 0`
+zur Ausgabe.
 
 ## Minimalbeispiel: feste Startstrategie
 
@@ -278,17 +282,21 @@ class StraightPolicy(torch.nn.Module):
         # Spieler 1 (grün, links) fährt nach rechts, Spieler 2 nach links.
         action_p1 = torch.full((image.shape[0],), 2, dtype=torch.int64, device=image.device)
         action_p2 = torch.full((image.shape[0],), 3, dtype=torch.int64, device=image.device)
-        return torch.where(player_id == 1, action_p1, action_p2)
+        return torch.where(player_id == 1, action_p1, action_p2) + image[:, 0, 0, 0].to(torch.int64) * 0
 
 
 policy = StraightPolicy().eval()
 example_image = torch.zeros((1, 3, 210, 160), dtype=torch.float32)
 example_player_id = torch.ones((1,), dtype=torch.int64)
-exported = torch.export.export(policy, (example_image, example_player_id))
-torch.export.save(exported, "my_policy.pt2")
+torch.onnx.export(
+    policy, (example_image, example_player_id), "my_policy.onnx",
+    input_names=["image", "player_id"], output_names=["action"],
+    opset_version=17,
+)
 ```
 
-Ladet anschließend `my_policy.pt2` als eines der beiden Modelle im Browser hoch.
+Prüft anschließend `my_policy.onnx` mit `python validate_submission.py my_policy.onnx`
+und ladet es danach im Browser hoch.
 Für ein bildbasiertes Beispiel mit einer einfachen Wandvermeidung könnt ihr
 auch `create_baselines.py` lesen oder ausführen.
 

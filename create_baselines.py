@@ -1,4 +1,4 @@
-"""Create small exported PyTorch baseline policies for the Surround runner.
+"""Create small ONNX baseline policies for the Surround runner.
 
 Run after installing requirements.txt:
     python create_baselines.py
@@ -28,7 +28,10 @@ class StraightPolicy(torch.nn.Module):
     def forward(self, image: torch.Tensor, player_id: torch.Tensor) -> torch.Tensor:
         left_player_action = torch.full((image.shape[0],), RIGHT, dtype=torch.int64, device=image.device)
         right_player_action = torch.full((image.shape[0],), LEFT, dtype=torch.int64, device=image.device)
-        return torch.where(player_id == 1, left_player_action, right_player_action)
+        action = torch.where(player_id == 1, left_player_action, right_player_action)
+        # Keep both public inputs in the ONNX graph, even though this simple
+        # baseline does not need the image to choose its action.
+        return action + image[:, 0, 0, 0].to(torch.int64) * 0
 
 
 class WallAvoidPolicy(torch.nn.Module):
@@ -101,14 +104,20 @@ def export_policy(policy: torch.nn.Module, filename: str) -> None:
     policy.eval()
     image = torch.zeros(IMAGE_SHAPE, dtype=torch.float32)
     player_id = torch.ones((1,), dtype=torch.int64)
-    exported = torch.export.export(policy, (image, player_id))
-    torch.export.save(exported, str(OUT_DIR / filename))
+    torch.onnx.export(
+        policy,
+        (image, player_id),
+        str(OUT_DIR / filename),
+        input_names=["image", "player_id"],
+        output_names=["action"],
+        opset_version=17,
+    )
 
 
 if __name__ == "__main__":
     OUT_DIR.mkdir(exist_ok=True)
-    for stale_filename in ("baseline_noop.pt2", "baseline_follow_ball.pt2", "baseline_wide_loop.pt2"):
+    for stale_filename in ("baseline_noop.onnx", "baseline_follow_ball.onnx", "baseline_wide_loop.onnx"):
         (OUT_DIR / stale_filename).unlink(missing_ok=True)
-    export_policy(StraightPolicy(), "baseline_straight.pt2")
-    export_policy(WallAvoidPolicy(), "baseline_wall_avoid.pt2")
+    export_policy(StraightPolicy(), "baseline_straight.onnx")
+    export_policy(WallAvoidPolicy(), "baseline_wall_avoid.onnx")
     print(f"Baselines geschrieben nach {OUT_DIR}")

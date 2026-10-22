@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-import torch
+import onnxruntime as ort
 from flask import Flask, jsonify, render_template, request
 
 
@@ -28,49 +28,51 @@ app = Flask(__name__, template_folder=str(BASE_DIR))
 app.config["MAX_CONTENT_LENGTH"] = MAX_MODEL_BYTES
 
 
-def load_exported_model(path: Path):
-    """Load a safe PyTorch export without deserializing Python pickle code."""
-    if path.suffix != ".pt2":
-        raise ValueError("Es sind ausschließlich exportierte PyTorch-Dateien (.pt2) erlaubt.")
-    if not hasattr(torch, "export") or not hasattr(torch.export, "load"):
-        raise RuntimeError("Für .pt2-Modelle wird PyTorch >= 2.2 benötigt. Bitte `pip install -r requirements.txt` erneut ausführen.")
+def load_onnx_model(path: Path) -> ort.InferenceSession:
+    """Load a portable ONNX model with the CPU-only reference runtime."""
+    if path.suffix.lower() != ".onnx":
+        raise ValueError("Es sind ausschließlich ONNX-Dateien (.onnx) erlaubt.")
     try:
-        exported = torch.export.load(str(path))
-        model = exported.module()
-    except (KeyError, RuntimeError, ValueError):
-        try:
-            # The PPO baseline uses TorchScript. It is readable across more
-            # PyTorch versions than torch.export archives produced by Colab.
-            model = torch.jit.load(str(path), map_location="cpu")
-        except (RuntimeError, ValueError) as error:
-            raise ValueError(
-                "Das .pt2-Modell kann nicht geladen werden. Bitte ein Modell "
-                "aus diesem Repository erneut exportieren und hochladen."
-            ) from error
-    model.eval()
-    return model
+        session = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+    except Exception as error:
+        raise ValueError("Die ONNX-Datei kann mit der CPU-Referenzlaufzeit nicht geladen werden.") from error
+
+    inputs = {item.name: item for item in session.get_inputs()}
+    if set(inputs) != {"image", "player_id"}:
+        raise ValueError("Das ONNX-Modell benötigt genau die Eingaben `image` und `player_id`.")
+    if inputs["image"].type != "tensor(float)" or list(inputs["image"].shape) != [1, 3, 210, 160]:
+        raise ValueError("`image` muss float32 mit der Form [1, 3, 210, 160] sein.")
+    if inputs["player_id"].type != "tensor(int64)" or list(inputs["player_id"].shape) != [1]:
+        raise ValueError("`player_id` muss int64 mit der Form [1] sein.")
+    outputs = session.get_outputs()
+    if (
+        len(outputs) != 1
+        or outputs[0].name != "action"
+        or outputs[0].type != "tensor(int64)"
+        or list(outputs[0].shape) != [1]
+    ):
+        raise ValueError("Das ONNX-Modell benötigt genau die int64-Ausgabe `action` mit Form [1].")
+    return session
 
 
 class ModelAgent:
-    """Adapter from the public challenge API to a PyTorch exported model."""
+    """Adapter from the public challenge API to an ONNX model."""
 
     def __init__(self, path: Path):
-        self.model = load_exported_model(path)
+        self.model = load_onnx_model(path)
 
     @staticmethod
-    def _image_tensor(image: np.ndarray) -> torch.Tensor:
+    def _image_tensor(image: np.ndarray) -> np.ndarray:
         if not isinstance(image, np.ndarray) or image.shape != (210, 160, 3):
             raise ValueError(f"Erwartet wird ein Bild der Form (210, 160, 3), erhalten: {image.shape}")
         # Public API: uint8 HWC. Model API: float32 NCHW, values in [0, 1].
-        return torch.from_numpy(image).permute(2, 0, 1).unsqueeze(0).contiguous().float() / 255.0
+        return np.ascontiguousarray(image.transpose(2, 0, 1)[None], dtype=np.float32) / 255.0
 
     def act(self, image: np.ndarray, player_id: int) -> int:
         image_tensor = self._image_tensor(image)
-        player_tensor = torch.tensor([player_id], dtype=torch.int64)
-        with torch.inference_mode():
-            output = self.model(image_tensor, player_tensor)
-        output = torch.as_tensor(output).detach().cpu()
-        if output.numel() != 1:
+        player_tensor = np.asarray([player_id], dtype=np.int64)
+        output = np.asarray(self.model.run(["action"], {"image": image_tensor, "player_id": player_tensor})[0])
+        if output.size != 1:
             raise ValueError("Das Modell muss genau eine Aktionsnummer als Skalar zurückgeben.")
         action = int(output.reshape(-1)[0].item())
         if action < 0 or action >= ACTION_COUNT:
@@ -303,15 +305,17 @@ def start():
     file_1 = request.files.get("model_1")
     file_2 = request.files.get("model_2")
     if not file_1 or not file_2:
-        return jsonify(error="Bitte zwei .pt2-Modelle hochladen."), 400
-    if not file_1.filename.endswith(".pt2") or not file_2.filename.endswith(".pt2"):
-        return jsonify(error="Nur .pt2-Dateien sind erlaubt."), 400
+        return jsonify(error="Bitte zwei ONNX-Modelle (.onnx) hochladen."), 400
+    if not file_1.filename.lower().endswith(".onnx") or not file_2.filename.lower().endswith(".onnx"):
+        return jsonify(error="Nur .onnx-Dateien sind erlaubt."), 400
     paths = []
     try:
         for uploaded in (file_1, file_2):
-            path = UPLOAD_DIR / f"{uuid.uuid4().hex}.pt2"
+            path = UPLOAD_DIR / f"{uuid.uuid4().hex}.onnx"
             uploaded.save(path)
             paths.append(path)
+        for path in paths:
+            load_onnx_model(path)
         session.start(paths[0], paths[1])
         return jsonify(ok=True)
     except Exception as exc:

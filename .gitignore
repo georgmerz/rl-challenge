@@ -11,3 +11,8 @@ uploads/
 .pytest_cache/
 .mypy_cache/
 .coverage
+
+# PPO checkpoints are generated locally; committed baselines are deterministic.
+baselines/baseline_ppo.onnx
+baselines/baseline_ppo.pt2
+baselines/test_ppo.onnx

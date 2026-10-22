@@ -1,6 +1,8 @@
 flask>=3.0
-numpy>=1.26
+numpy>=1.26,<2
 torch>=2.2
+onnx>=1.18,<1.19
+onnxruntime>=1.16
 pettingzoo[atari]>=1.24
 AutoROM[accept-rom-license]>=0.6
 pygame>=2.5
