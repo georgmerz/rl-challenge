@@ -180,7 +180,15 @@ Erzeugt:
 ```text
 baselines/baseline_straight.onnx
 baselines/baseline_wall_avoid.onnx
+baselines/baseline_wall_counter.onnx
 ```
+
+`baseline_wall_counter.onnx` ist eine kurze bildbasierte Gegenstrategie für
+`baseline_wall_avoid.onnx`. Sie lokalisiert die eigene grüne bzw. blaue Spur
+im Bild und wählt abhängig von deren Position unterschiedliche Richtungen.
+Sie ist kein gelerntes Modell, sondern ein kompaktes Beispiel dafür, wie ein
+ONNX-Modell auf den Bildinhalt reagieren kann. Im lokalen Referenztest gewinnt
+sie gegen `baseline_wall_avoid` auf beiden Seiten.
 
 ### PPO-Selbstspiel-Baseline trainieren
 

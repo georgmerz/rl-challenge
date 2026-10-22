@@ -101,6 +101,76 @@ class WallAvoidPolicy(torch.nn.Module):
 
         return torch.where(player_id == 1, p1_action, p2_action)
 
+
+class WallAvoidCounterPolicy(torch.nn.Module):
+    """A small image-based counter strategy for ``baseline_wall_avoid``.
+
+    It uses the same transparent color and position features as
+    :class:`WallAvoidPolicy`, but follows a wider route for the left/green
+    player. Against the fixed wall-avoid baseline this leaves the opponent in
+    the smaller area first. The right/blue route matches the successful
+    right-side route of ``WallAvoidPolicy``.
+
+    This is a deterministic visual baseline, not a learned policy. It gives
+    students a compact example of a model that genuinely reacts to an image
+    and uses multiple actions.
+    """
+
+    def forward(self, image: torch.Tensor, player_id: torch.Tensor) -> torch.Tensor:
+        red = image[:, 0, :, :]
+        green = image[:, 1, :, :]
+        blue = image[:, 2, :, :]
+        height = image.shape[2]
+        width = image.shape[3]
+        x = torch.arange(width, device=image.device).reshape(1, 1, width).to(torch.float32)
+        y = torch.arange(height, device=image.device).reshape(1, height, 1).to(torch.float32)
+        playing_field = ((y >= 34) & (y <= 193)).to(torch.float32)
+
+        green_player = ((red < 0.5) & (green > 0.6) & (blue < 0.5)).to(torch.float32)
+        blue_player = ((red < 0.35) & (green < 0.35) & (blue > 0.55)).to(torch.float32)
+        player_is_left = (player_id == 1).reshape(-1, 1, 1)
+        player_pixels = torch.where(player_is_left, green_player, blue_player) * playing_field
+
+        pixel_count = player_pixels.sum(dim=(1, 2)).clamp_min(1.0)
+        x_center = (player_pixels * x).sum(dim=(1, 2)) / pixel_count
+        y_center = (player_pixels * y).sum(dim=(1, 2)) / pixel_count
+
+        up = torch.full_like(player_id, UP)
+        right = torch.full_like(player_id, RIGHT)
+        left = torch.full_like(player_id, LEFT)
+        down = torch.full_like(player_id, DOWN)
+
+        # Left/green: a wider clockwise loop than WallAvoidPolicy's p1 loop.
+        p1_action = torch.where(
+            (x_center < 127.0) & (y_center < 158.0),
+            down,
+            torch.where(
+                (x_center < 127.0) & (y_center >= 158.0),
+                right,
+                torch.where(
+                    (x_center >= 127.0) & (y_center > 94.0),
+                    up,
+                    torch.where((x_center > 80.0) & (y_center <= 94.0), left, down),
+                ),
+            ),
+        )
+
+        # Right/blue: the route that already defeats WallAvoidPolicy's p1 route.
+        p2_action = torch.where(
+            (x_center > 38.0) & (y_center > 65.0),
+            up,
+            torch.where(
+                (x_center > 38.0) & (y_center <= 65.0),
+                left,
+                torch.where(
+                    (x_center <= 38.0) & (y_center < 155.0),
+                    down,
+                    torch.where((x_center < 122.0) & (y_center >= 155.0), right, up),
+                ),
+            ),
+        )
+        return torch.where(player_id == 1, p1_action, p2_action)
+
 def export_policy(policy: torch.nn.Module, filename: str) -> None:
     policy.eval()
     image = torch.zeros(IMAGE_SHAPE, dtype=torch.float32)
@@ -121,4 +191,5 @@ if __name__ == "__main__":
         (OUT_DIR / stale_filename).unlink(missing_ok=True)
     export_policy(StraightPolicy(), "baseline_straight.onnx")
     export_policy(WallAvoidPolicy(), "baseline_wall_avoid.onnx")
+    export_policy(WallAvoidCounterPolicy(), "baseline_wall_counter.onnx")
     print(f"Baselines geschrieben nach {OUT_DIR}")
