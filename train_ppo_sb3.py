@@ -25,6 +25,13 @@ from stable_baselines3.common.env_util import make_vec_env
 from torch import nn
 
 
+MAX_EPISODE_STEPS = 500
+# Without a small cost for time, both straight-moving players can produce an
+# endless round with reward zero. This shaping is used only for training; the
+# tournament runner keeps its original scoring rules.
+STEP_PENALTY = -0.01
+
+
 class Player1VsStraightEnv(gym.Env):
     """Player 1 (left/green) versus the right/blue straight baseline."""
 
@@ -38,12 +45,14 @@ class Player1VsStraightEnv(gym.Env):
         self.action_space = spaces.Discrete(5)
         self.player_1: str | None = None
         self.player_2: str | None = None
+        self.episode_steps = 0
 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         observations, _ = self.env.reset(seed=seed)
         # surround_v2: first_0 = right/blue, second_0 = left/green.
         self.player_2, self.player_1 = self.env.possible_agents
+        self.episode_steps = 0
         return observations[self.player_1], {}
 
     def step(self, action: int):
@@ -56,17 +65,28 @@ class Player1VsStraightEnv(gym.Env):
             self.player_2: 3,
         }
         observations, rewards, terminations, truncations, infos = self.env.step(actions)
+        self.episode_steps += 1
         # The tournament starts a fresh round as soon as somebody scores.
-        # End the Gymnasium episode here as well, so training sees the same
-        # short win/loss task as the runner.
+        # End the Gymnasium episode here as well. A capped episode and the
+        # small per-step cost prevent the no-action loop from looking good to
+        # PPO merely because it survives forever.
         point_scored = any(reward != 0 for reward in rewards.values())
-        terminated = point_scored or bool(terminations.get(self.player_1, False))
-        truncated = bool(truncations.get(self.player_1, False))
+        natural_end = bool(terminations.get(self.player_1, False)) or bool(truncations.get(self.player_1, False))
+        timed_out = not (point_scored or natural_end) and self.episode_steps >= MAX_EPISODE_STEPS
+        terminated = point_scored or natural_end
+        truncated = timed_out
+        tournament_reward = float(rewards.get(self.player_1, 0.0))
+        # The tournament gives both competitors one point after a simultaneous
+        # crash. Mirror that reward in training rather than treating it as 0.
+        round_draw = natural_end and not point_scored
+        if round_draw:
+            tournament_reward = 1.0
         if terminated or truncated:
             observation = np.zeros(self.observation_space.shape, dtype=np.uint8)
         else:
             observation = observations[self.player_1]
-        return observation, float(rewards.get(self.player_1, 0.0)), terminated, truncated, {}
+        info = {"tournament_reward": tournament_reward, "timeout": timed_out, "draw": round_draw}
+        return observation, tournament_reward + STEP_PENALTY, terminated, truncated, info
 
     def close(self) -> None:
         self.env.close()
@@ -145,18 +165,59 @@ def export_challenge_policy(model: PPO, output: Path) -> None:
 class ExportCallback(BaseCallback):
     """Overwrite the challenge model with the latest policy every N steps."""
 
-    def __init__(self, output: Path, every_steps: int) -> None:
+    def __init__(self, output: Path, every_steps: int, eval_every_steps: int, eval_episodes: int) -> None:
         super().__init__()
         self.output = output
         self.every_steps = every_steps
         self.next_export = every_steps
+        self.eval_every_steps = eval_every_steps
+        self.eval_episodes = eval_episodes
+        self.next_evaluation = eval_every_steps
 
     def _on_step(self) -> bool:
         if self.num_timesteps >= self.next_export:
             export_challenge_policy(self.model, self.output)
             print(f"Checkpoint exportiert nach {self.num_timesteps} Schritten: {self.output}")
             self.next_export += self.every_steps
+        if self.num_timesteps >= self.next_evaluation:
+            evaluate_deterministic(self.model, self.eval_episodes)
+            self.next_evaluation += self.eval_every_steps
         return True
+
+
+def evaluate_deterministic(model: PPO, episodes: int) -> None:
+    """Report the same argmax policy that is exported to ONNX."""
+    outcomes = {"win": 0, "loss": 0, "draw": 0, "timeout": 0}
+    actions = np.zeros(5, dtype=np.int64)
+    for seed in range(episodes):
+        env = Player1VsStraightEnv()
+        try:
+            observation, _ = env.reset(seed=90_000 + seed)
+            while True:
+                action, _ = model.predict(observation, deterministic=True)
+                action = int(action)
+                actions[action] += 1
+                observation, _, terminated, truncated, info = env.step(action)
+                if terminated or truncated:
+                    if info["timeout"]:
+                        outcomes["timeout"] += 1
+                    elif info["draw"]:
+                        outcomes["draw"] += 1
+                    elif info["tournament_reward"] > 0:
+                        outcomes["win"] += 1
+                    elif info["tournament_reward"] < 0:
+                        outcomes["loss"] += 1
+                    else:
+                        outcomes["draw"] += 1
+                    break
+        finally:
+            env.close()
+    print(
+        "Deterministische ONNX-Policy gegen baseline_straight: "
+        f"Siege {outcomes['win']}, Niederlagen {outcomes['loss']}, "
+        f"Unentschieden {outcomes['draw']}, Timeouts {outcomes['timeout']}; "
+        f"Aktionen {actions.tolist()}"
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -164,6 +225,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timesteps", type=int, default=100_000, help="Training steps (default: 100000).")
     parser.add_argument("--output", default="baselines/baseline_ppo.onnx", help="Output path for the exported ONNX challenge model.")
     parser.add_argument("--export-every", type=int, default=1_000, help="Checkpoint-Export nach N Schritten (Standard: 1000).")
+    parser.add_argument("--eval-every", type=int, default=5_000, help="Deterministische Evaluation nach N Schritten (Standard: 5000).")
+    parser.add_argument("--eval-episodes", type=int, default=5, help="Runden pro deterministischer Evaluation (Standard: 5).")
     parser.add_argument(
         "--n-envs",
         type=int,
@@ -186,8 +249,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    if args.timesteps <= 0 or args.export_every <= 0 or args.n_envs <= 0:
-        raise ValueError("--timesteps, --export-every und --n-envs müssen positiv sein.")
+    if min(args.timesteps, args.export_every, args.eval_every, args.eval_episodes, args.n_envs) <= 0:
+        raise ValueError("--timesteps, --export-every, --eval-every, --eval-episodes und --n-envs müssen positiv sein.")
     # Four independent games make each policy update contain substantially
     # more scoring situations than a single long game, while staying simple
     # enough for a laptop baseline.
@@ -215,10 +278,11 @@ def main() -> None:
         output = Path(args.output)
         model.learn(
             total_timesteps=args.timesteps,
-            callback=ExportCallback(output, args.export_every),
+            callback=ExportCallback(output, args.export_every, args.eval_every, args.eval_episodes),
             progress_bar=False,
         )
         export_challenge_policy(model, output)
+        evaluate_deterministic(model, args.eval_episodes)
         print(f"PPO-Baseline exportiert nach {output}")
     finally:
         env.close()
