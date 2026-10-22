@@ -187,8 +187,8 @@ baselines/baseline_wall_avoid.onnx
 `train_ppo_sb3.py` verwendet die etablierte Bibliothek
 [Stable-Baselines3](https://stable-baselines3.readthedocs.io/) und trainiert
 eine CNN-Policy mit PPO. Dies ist absichtlich ein Minimalbeispiel: Die Policy
-trainiert nur als Spieler 1 auf der linken/grünen Seite gegen einen zufälligen
-Spieler 2. Das CNN ist bewusst klein (etwa 50.000 Gewichte), damit Training
+trainiert nur als Spieler 1 auf der linken/grünen Seite gegen die feste
+`baseline_straight` (Spieler 2, rechts/blau, stets `LEFT`). Das CNN ist bewusst klein (etwa 50.000 Gewichte), damit Training
 und Experimentieren auf einem Laptop zügig bleiben. Nach dem Training wird
 automatisch eine turnierkompatible Datei exportiert.
 

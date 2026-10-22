@@ -1,6 +1,7 @@
 """Minimal PPO example for player 1 (green/left) in Atari Surround.
 
-The agent always plays player 1 against a random opponent. The trained policy
+The agent always plays player 1 against the fixed ``baseline_straight``
+opponent. The trained policy
 is exported to the challenge's portable ONNX ``.onnx`` format.
 
 Example:
@@ -24,8 +25,8 @@ from stable_baselines3.common.env_util import make_vec_env
 from torch import nn
 
 
-class Player1VsRandomEnv(gym.Env):
-    """Player 1 (left/green) versus a random player 2."""
+class Player1VsStraightEnv(gym.Env):
+    """Player 1 (left/green) versus the right/blue straight baseline."""
 
     metadata = {"render_modes": []}
 
@@ -50,7 +51,9 @@ class Player1VsRandomEnv(gym.Env):
             raise RuntimeError("reset() muss vor step() aufgerufen werden.")
         actions = {
             self.player_1: int(action),
-            self.player_2: int(self.np_random.integers(5)),
+            # This is exactly baseline_straight.onnx for player_id=2: the
+            # right/blue player always moves left.
+            self.player_2: 3,
         }
         observations, rewards, terminations, truncations, infos = self.env.step(actions)
         # The tournament starts a fresh round as soon as somebody scores.
@@ -188,7 +191,7 @@ def main() -> None:
     # Four independent games make each policy update contain substantially
     # more scoring situations than a single long game, while staying simple
     # enough for a laptop baseline.
-    env = make_vec_env(Player1VsRandomEnv, n_envs=args.n_envs, seed=42)
+    env = make_vec_env(Player1VsStraightEnv, n_envs=args.n_envs, seed=42)
     try:
         model = PPO(
             "CnnPolicy",
