@@ -33,6 +33,10 @@ wechseln nach jeder Runde die Seiten, damit beide fünfmal links/grün und
 fünfmal rechts/blau spielen. Wer nach zehn Runden mehr Punkte hat, gewinnt;
 bei gleichem Punktestand endet das Duell unentschieden.
 
+Wenn beide Figuren in derselben Runde gleichzeitig kollidieren, ist die Runde
+unentschieden und **beide Spieler erhalten einen Punkt**. Eine laufende Partie
+kann im Browser pausiert, fortgesetzt oder gestoppt werden.
+
 Ihr gebt ausschließlich eine exportierte PyTorch-Datei (`.pt2`) ab. Innerhalb
 des Modells dürft ihr Architektur, trainierte Gewichte und Bildverarbeitung
 frei wählen. Der Runner übergibt pro Spielschritt die Eingaben, ruft eure

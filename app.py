@@ -101,6 +101,9 @@ class GameSession:
         self.lock = threading.Lock()
         self.state = GameState(score={"Spieler 1": 0, "Spieler 2": 0})
         self.thread: threading.Thread | None = None
+        self.resume_event = threading.Event()
+        self.resume_event.set()
+        self.stop_event = threading.Event()
 
     def snapshot(self):
         with self.lock:
@@ -110,6 +113,8 @@ class GameSession:
         with self.lock:
             if self.thread and self.thread.is_alive():
                 raise RuntimeError("Es läuft bereits eine Partie.")
+            self.stop_event.clear()
+            self.resume_event.set()
             self.state = GameState(
                 status="starting",
                 message="Modelle werden geladen...",
@@ -118,6 +123,31 @@ class GameSession:
             )
             self.thread = threading.Thread(target=self._run, args=(model_1, model_2, rounds), daemon=True)
             self.thread.start()
+
+    def pause(self):
+        with self.lock:
+            if self.state.status != "running":
+                raise RuntimeError("Nur eine laufende Partie kann pausiert werden.")
+            self.resume_event.clear()
+            self.state.status = "paused"
+            self.state.message = "Partie pausiert"
+
+    def resume(self):
+        with self.lock:
+            if self.state.status != "paused":
+                raise RuntimeError("Die Partie ist nicht pausiert.")
+            self.resume_event.set()
+            self.state.status = "running"
+            self.state.message = f"Runde {self.state.round} von {self.state.total_rounds} läuft"
+
+    def stop(self):
+        with self.lock:
+            if self.state.status not in {"starting", "running", "paused"}:
+                raise RuntimeError("Es läuft keine Partie, die gestoppt werden kann.")
+            self.stop_event.set()
+            self.resume_event.set()
+            self.state.status = "stopping"
+            self.state.message = "Partie wird gestoppt..."
 
     def _run(self, model_1_path: Path, model_2_path: Path, rounds: int):
         env = None
@@ -161,7 +191,17 @@ class GameSession:
                 self.state.status = "running"
                 self.state.message = f"Runde {round_number} von {rounds} läuft"
 
+            stopped = False
             while round_number <= rounds and step_count < MAX_MATCH_STEPS:
+                # Wait without blocking the Flask request thread, so the UI can
+                # pause, resume or stop the game between Atari frames.
+                while not self.resume_event.wait(timeout=0.1):
+                    if self.stop_event.is_set():
+                        stopped = True
+                        break
+                if stopped or self.stop_event.is_set():
+                    stopped = True
+                    break
                 actions = {}
                 for name in names:
                     image = observations[name]
@@ -175,6 +215,13 @@ class GameSession:
                     if reward > 0:
                         score[competitor_by_name[name]] += 1
                         point_scored = True
+                # A simultaneous crash has no positive Surround reward. It is
+                # a draw for this round, so both tournament players get a point.
+                round_draw = not point_scored and (any(terminations.values()) or any(truncations.values()))
+                if round_draw:
+                    score["Spieler 1"] += 1
+                    score["Spieler 2"] += 1
+                    point_scored = True
                 with self.lock:
                     self.state.frame = encode_frame(frame)
                     self.state.score = score.copy()
@@ -189,24 +236,32 @@ class GameSession:
                     agents, competitor_by_name = set_round_players()
                     with self.lock:
                         self.state.frame = encode_frame(env.render())
-                        self.state.message = f"Runde {round_number} von {rounds} läuft"
+                        if self.state.status == "running":
+                            self.state.message = f"Runde {round_number} von {rounds} läuft"
                     time.sleep(FRAME_DELAY_SECONDS)
                     continue
                 if any(terminations.values()) or any(truncations.values()):
                     break
                 time.sleep(FRAME_DELAY_SECONDS)
 
-            if step_count >= MAX_MATCH_STEPS and round_number <= rounds:
+            if stopped:
+                winner = None
+                message = "Partie gestoppt"
+                status = "stopped"
+            elif step_count >= MAX_MATCH_STEPS and round_number <= rounds:
                 winner = None
                 message = "Zeitlimit erreicht"
+                status = "finished"
             elif score["Spieler 1"] == score["Spieler 2"]:
                 winner = None
                 message = "Unentschieden"
+                status = "finished"
             else:
                 winner = "Spieler 1" if score["Spieler 1"] > score["Spieler 2"] else "Spieler 2"
                 message = f"{winner} gewinnt"
+                status = "finished"
             with self.lock:
-                self.state.status = "finished"
+                self.state.status = status
                 self.state.winner = winner
                 self.state.message = message
         except Exception as exc:
@@ -251,6 +306,33 @@ def start():
     except Exception as exc:
         for path in paths:
             path.unlink(missing_ok=True)
+        return jsonify(error=str(exc)), 400
+
+
+@app.post("/api/pause")
+def pause():
+    try:
+        session.pause()
+        return jsonify(ok=True)
+    except RuntimeError as exc:
+        return jsonify(error=str(exc)), 400
+
+
+@app.post("/api/resume")
+def resume():
+    try:
+        session.resume()
+        return jsonify(ok=True)
+    except RuntimeError as exc:
+        return jsonify(error=str(exc)), 400
+
+
+@app.post("/api/stop")
+def stop():
+    try:
+        session.stop()
+        return jsonify(ok=True)
+    except RuntimeError as exc:
         return jsonify(error=str(exc)), 400
 
 
