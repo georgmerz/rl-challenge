@@ -51,7 +51,11 @@ class Player1VsRandomEnv(gym.Env):
             self.player_2: int(self.np_random.integers(5)),
         }
         observations, rewards, terminations, truncations, infos = self.env.step(actions)
-        terminated = bool(terminations.get(self.player_1, False))
+        # The tournament starts a fresh round as soon as somebody scores.
+        # End the Gymnasium episode here as well, so training sees the same
+        # short win/loss task as the runner.
+        point_scored = any(reward != 0 for reward in rewards.values())
+        terminated = point_scored or bool(terminations.get(self.player_1, False))
         truncated = bool(truncations.get(self.player_1, False))
         if terminated or truncated:
             observation = np.zeros(self.observation_space.shape, dtype=np.uint8)
@@ -165,14 +169,18 @@ def main() -> None:
         model = PPO(
             "CnnPolicy",
             env,
-            learning_rate=2.5e-4,
-            n_steps=128,
-            batch_size=64,
             policy_kwargs={
                 "features_extractor_class": SmallCNN,
                 "features_extractor_kwargs": {"features_dim": 64},
                 "net_arch": {"pi": [64], "vf": [64]},
             },
+            # Larger, less correlated rollouts and fewer passes over each batch
+            # prevent an early lucky action from dominating the policy.
+            n_steps=512,
+            batch_size=128,
+            n_epochs=4,
+            learning_rate=1e-4,
+            ent_coef=0.02,
             verbose=1,
             seed=42,
             device=args.device,
