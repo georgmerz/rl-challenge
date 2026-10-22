@@ -105,9 +105,10 @@ Gewichte bereits in der exportierten Datei enthalten sein.
 ### Plattformübergreifende Abgabe
 
 Trainiert werden darf auf Mac, Windows, Linux oder Google Colab. Für die
-Bewertung zählt aber ausschließlich, ob die exportierte Datei im lokalen
-Referenz-Runner auf der **CPU** läuft. Eine NVIDIA-GPU, Apple Silicon oder
-eine GPU überhaupt ist für das Turnier nicht erforderlich.
+Bewertung zählt aber ausschließlich, ob die exportierte Datei im
+Referenz-Runner der Lehrveranstaltung auf dem **Mac des Veranstalters** und
+dort auf der **CPU** läuft. Eine NVIDIA-GPU, Apple Silicon oder eine GPU
+überhaupt ist für das Turnier nicht erforderlich.
 
 Für selbst entwickelte Modelle empfehlen wir ausdrücklich **TorchScript**:
 
@@ -126,10 +127,11 @@ keine GPU voraussetzen. Neue Tensoren müssen auf dem Gerät der Eingabe erzeugt
 werden, zum Beispiel mit `device=image.device`. So funktionieren Modelle beim
 Training mit GPU und bei der Turnierauswertung auf CPU gleichermaßen.
 
-**Verbindlicher Vorabtest:** Startet vor der Abgabe `python app.py`, ladet das
+**Vorabtest der Teams:** Startet vor der Abgabe `python app.py`, ladet das
 eigene Modell zusammen mit `baselines/baseline_straight.pt2` hoch und startet
-eine Partie. Nur eine Datei, die diesen Test ohne Fehlermeldung durchläuft,
-gilt als abgabefähig.
+eine Partie. Das verhindert die meisten Exportfehler, ersetzt aber nicht die
+finale Prüfung auf dem Referenz-Mac. Nur dort erfolgreich geladene Modelle
+gelten als abgabefähig.
 
 ## Festgelegte Modell-Schnittstelle
 
