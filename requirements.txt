@@ -1,5 +1,8 @@
 flask>=3.0
-numpy>=1.26,<2
+# NumPy 1.x has no wheels for Python 3.13. Keep the conservative version on
+# older systems but permit NumPy 2 on current Linux/Colab servers.
+numpy>=1.26,<2; python_version < "3.13"
+numpy>=2,<3; python_version >= "3.13"
 torch>=2.2
 onnx>=1.18,<1.19
 onnxruntime>=1.16
