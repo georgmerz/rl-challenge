@@ -1,11 +1,11 @@
-"""Minimal PPO example for player 1 (green/left) in Atari Surround.
+"""Minimal DQN example for player 1 (green/left) in Atari Surround.
 
 The agent always plays player 1 against the fixed ``baseline_wall_avoid``
 opponent. The trained policy
 is exported to the challenge's portable ONNX ``.onnx`` format.
 
 Example:
-    python train_ppo_sb3.py --timesteps 100000 --output baselines/baseline_ppo.onnx
+    python train_ppo_sb3.py --timesteps 500000 --output baselines/baseline_dqn.onnx
 """
 
 from __future__ import annotations
@@ -18,11 +18,11 @@ import gymnasium as gym
 import numpy as np
 import torch
 from gymnasium import spaces
-from stable_baselines3 import PPO
+from stable_baselines3 import DQN
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
-from stable_baselines3.common.env_util import make_vec_env
 from torch import nn
+from torch.nn import functional as F
 
 
 MAX_EPISODE_STEPS = 1_000
@@ -81,7 +81,7 @@ class Player1VsWallAvoidEnv(gym.Env):
         self.observations = observations
         self.episode_steps += 1
         # The tournament starts a fresh round as soon as somebody scores.
-        # The technical cap keeps PPO rollouts bounded. It does not change the
+        # The technical cap keeps DQN episodes bounded. It does not change the
         # tournament reward: a timeout has reward 0.
         point_scored = any(reward != 0 for reward in rewards.values())
         natural_end = bool(terminations.get(self.player_1, False)) or bool(truncations.get(self.player_1, False))
@@ -116,13 +116,14 @@ class SmallCNN(BaseFeaturesExtractor):
             nn.ReLU(),
             nn.Conv2d(16, 32, kernel_size=3, stride=2),
             nn.ReLU(),
-            # Fixed pooling is supported by Apple's MPS backend. At this
-            # point the feature map is 25 x 19, so this produces 6 x 4.
-            nn.AvgPool2d(kernel_size=4, stride=4),
+            # The 84 x 84 training image becomes 9 x 9 after the convolutions.
+            # Fixed pooling makes a 4 x 4 output and is exportable on both
+            # older local PyTorch versions and current Colab.
+            nn.AvgPool2d(kernel_size=3, stride=2),
             nn.Flatten(),
         )
         self.linear = nn.Sequential(
-            nn.Linear(32 * 6 * 4, features_dim),
+            nn.Linear(32 * 4 * 4, features_dim),
             nn.ReLU(),
         )
 
@@ -130,37 +131,27 @@ class SmallCNN(BaseFeaturesExtractor):
         return self.linear(self.cnn(observations))
 
 
-class ChallengePolicy(nn.Module):
-    """Turn an SB3 CNN policy into the challenge's two-input API."""
+class ChallengeDQNPolicy(nn.Module):
+    """Turn an SB3 DQN Q-network into the challenge's two-input API."""
 
-    def __init__(self, features_extractor: nn.Module, mlp_extractor: nn.Module, action_net: nn.Module) -> None:
+    def __init__(self, q_net: nn.Module) -> None:
         super().__init__()
-        # Copy only the modules used for actions. Copying the complete SB3
-        # policy fails on recent PyTorch versions because it also contains
-        # non-leaf tensors used during training.
-        self.features_extractor = copy.deepcopy(features_extractor).cpu()
-        self.mlp_extractor = copy.deepcopy(mlp_extractor).cpu()
-        self.action_net = copy.deepcopy(action_net).cpu()
+        self.q_net = copy.deepcopy(q_net).cpu()
 
     def forward(self, image: torch.Tensor, player_id: torch.Tensor) -> torch.Tensor:
-        # SB3 normally performs image-space checks in Python before calling
-        # these modules. Calling the modules directly keeps ONNX export free
-        # from those checks. ``image`` is already normalized exactly as SB3's
-        # preprocessing would normalize the uint8 training observations.
-        features = self.features_extractor(image)
-        latent_pi = self.mlp_extractor.forward_actor(features)
-        logits = self.action_net(latent_pi)
+        # ``image`` is already normalized exactly as SB3's image
+        # preprocessing would normalize the uint8 training observations. The
+        # DQN trains on compact 84 x 84 frames; this resize becomes part of
+        # the portable ONNX model, while its public input remains 210 x 160.
+        image = F.interpolate(image, size=(84, 84), mode="bilinear", align_corners=False)
+        q_values = self.q_net(image)
         # Keep player_id as a graph input for the fixed ONNX challenge API.
-        return torch.argmax(logits, dim=1).to(torch.int64) + player_id * 0
+        return torch.argmax(q_values, dim=1).to(torch.int64) + player_id * 0
 
 
-def export_challenge_policy(model: PPO, output: Path) -> None:
+def export_challenge_policy(model: DQN, output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
-    policy = ChallengePolicy(
-        model.policy.features_extractor,
-        model.policy.mlp_extractor,
-        model.policy.action_net,
-    ).eval()
+    policy = ChallengeDQNPolicy(model.policy.q_net).eval()
     image = torch.zeros((1, 3, 210, 160), dtype=torch.float32)
     player_id = torch.ones((1,), dtype=torch.int64)
     temporary_output = output.with_suffix(".tmp.onnx")
@@ -176,7 +167,7 @@ def export_challenge_policy(model: PPO, output: Path) -> None:
 
 
 class ExportCallback(BaseCallback):
-    """Overwrite the challenge model with the latest policy every N steps."""
+    """Overwrite the challenge model with the latest DQN every N steps."""
 
     def __init__(self, output: Path, every_steps: int, eval_every_steps: int, eval_episodes: int) -> None:
         super().__init__()
@@ -198,12 +189,12 @@ class ExportCallback(BaseCallback):
         return True
 
 
-def evaluate_deterministic(model: PPO, episodes: int) -> None:
+def evaluate_deterministic(model: DQN, episodes: int) -> None:
     """Report the same argmax policy that is exported to ONNX."""
     outcomes = {"win": 0, "loss": 0, "draw": 0, "timeout": 0}
     actions = np.zeros(5, dtype=np.int64)
     for seed in range(episodes):
-        env = Player1VsWallAvoidEnv()
+        env = make_dqn_env()
         try:
             observation, _ = env.reset(seed=90_000 + seed)
             while True:
@@ -233,19 +224,18 @@ def evaluate_deterministic(model: PPO, episodes: int) -> None:
     )
 
 
+def make_dqn_env() -> gym.Env:
+    """Use compact observations so DQN's replay buffer fits in Colab RAM."""
+    return gym.wrappers.ResizeObservation(Player1VsWallAvoidEnv(), (84, 84))
+
+
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train a Stable-Baselines3 PPO baseline for Atari Surround.")
-    parser.add_argument("--timesteps", type=int, default=100_000, help="Training steps (default: 100000).")
-    parser.add_argument("--output", default="baselines/baseline_ppo.onnx", help="Output path for the exported ONNX challenge model.")
+    parser = argparse.ArgumentParser(description="Train a Stable-Baselines3 DQN baseline for Atari Surround.")
+    parser.add_argument("--timesteps", type=int, default=500_000, help="Training steps (default: 500000).")
+    parser.add_argument("--output", default="baselines/baseline_dqn.onnx", help="Output path for the exported ONNX challenge model.")
     parser.add_argument("--export-every", type=int, default=1_000, help="Checkpoint-Export nach N Schritten (Standard: 1000).")
     parser.add_argument("--eval-every", type=int, default=5_000, help="Deterministische Evaluation nach N Schritten (Standard: 5000).")
     parser.add_argument("--eval-episodes", type=int, default=5, help="Runden pro deterministischer Evaluation (Standard: 5).")
-    parser.add_argument(
-        "--n-envs",
-        type=int,
-        default=4,
-        help="Parallele Zufallsspiele pro PPO-Update (Standard: 4).",
-    )
     parser.add_argument(
         "--device",
         default=(
@@ -262,28 +252,29 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    if min(args.timesteps, args.export_every, args.eval_every, args.eval_episodes, args.n_envs) <= 0:
-        raise ValueError("--timesteps, --export-every, --eval-every, --eval-episodes und --n-envs müssen positiv sein.")
-    # Four independent games make each policy update contain substantially
-    # more scoring situations than a single long game, while staying simple
-    # enough for a laptop baseline.
-    env = make_vec_env(Player1VsWallAvoidEnv, n_envs=args.n_envs, seed=42)
+    if min(args.timesteps, args.export_every, args.eval_every, args.eval_episodes) <= 0:
+        raise ValueError("--timesteps, --export-every, --eval-every und --eval-episodes müssen positiv sein.")
+    env = make_dqn_env()
     try:
-        model = PPO(
+        model = DQN(
             "CnnPolicy",
             env,
             policy_kwargs={
                 "features_extractor_class": SmallCNN,
                 "features_extractor_kwargs": {"features_dim": 64},
-                "net_arch": {"pi": [64], "vf": [64]},
+                "net_arch": [64],
             },
-            # Diverse rollouts, few passes over each batch and a small entropy
-            # bonus provide exploration without freezing the policy.
-            n_steps=256,
-            batch_size=256,
-            n_epochs=4,
-            learning_rate=2.5e-4,
-            ent_coef=0.005,
+            learning_rate=1e-4,
+            buffer_size=20_000,
+            optimize_memory_usage=True,
+            replay_buffer_kwargs={"handle_timeout_termination": False},
+            learning_starts=5_000,
+            batch_size=32,
+            train_freq=4,
+            gradient_steps=1,
+            target_update_interval=1_000,
+            exploration_fraction=0.30,
+            exploration_final_eps=0.05,
             verbose=1,
             seed=42,
             device=args.device,
@@ -296,7 +287,7 @@ def main() -> None:
         )
         export_challenge_policy(model, output)
         evaluate_deterministic(model, args.eval_episodes)
-        print(f"PPO-Baseline exportiert nach {output}")
+        print(f"DQN-Baseline exportiert nach {output}")
     finally:
         env.close()
 
