@@ -93,6 +93,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="auto", help="SB3 device, e.g. auto, cuda, mps or cpu.")
     parser.add_argument("--buffer-size", type=int, default=100_000, help="Replay-buffer size (default: 100000).")
     parser.add_argument("--learning-starts", type=int, default=80_000, help="Random steps before updates (default: 80000).")
+    parser.add_argument(
+        "--exploration-fraction",
+        type=float,
+        default=0.10,
+        help="Share of the complete run over which epsilon falls from 1.0 to --exploration-final-eps (default: 0.10).",
+    )
+    parser.add_argument(
+        "--exploration-final-eps",
+        type=float,
+        default=0.01,
+        help="Final probability of a random action after epsilon decay (default: 0.01).",
+    )
     parser.add_argument("--export-every", type=int, default=100_000, help="Checkpoint interval in steps (default: 100000).")
     parser.add_argument("--resume", type=Path, help="Optional .zip checkpoint to continue; --timesteps are added training steps.")
     return parser.parse_args()
@@ -102,6 +114,10 @@ def main() -> None:
     args = parse_args()
     if min(args.timesteps, args.buffer_size, args.learning_starts, args.export_every) <= 0:
         raise ValueError("--timesteps, --buffer-size, --learning-starts und --export-every müssen positiv sein.")
+    if not 0 < args.exploration_fraction <= 1:
+        raise ValueError("--exploration-fraction muss zwischen 0 (exklusiv) und 1 liegen.")
+    if not 0 <= args.exploration_final_eps <= 1:
+        raise ValueError("--exploration-final-eps muss zwischen 0 und 1 liegen.")
     env = make_env()
     try:
         # Deliberately standard SB3 DQN: no custom network, Double-DQN
@@ -123,8 +139,8 @@ def main() -> None:
                 batch_size=32,
                 train_freq=4,
                 target_update_interval=1_000,
-                exploration_fraction=0.10,
-                exploration_final_eps=0.01,
+                exploration_fraction=args.exploration_fraction,
+                exploration_final_eps=args.exploration_final_eps,
                 verbose=1,
                 seed=42,
                 device=args.device,

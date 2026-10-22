@@ -46,6 +46,32 @@ baseline_pong_dqn_step_100000.zip   # SB3-Gewichte für einen Folgelauf
 
 Die abschließende Datei heißt `baselines/baseline_pong_dqn.onnx`.
 
+### Empfohlener längerer Lauf
+
+Pong zeigt bei einem DQN oft erst nach mehreren Millionen Entscheidungen einen
+sichtbaren Fortschritt. Für einen aussagekräftigeren Serverlauf daher fünf
+Millionen Schritte wählen und die Zufallsexploration über die ersten zwei
+Millionen Schritte absenken (`0.4 * 5.000.000`). Der Replay-Buffer ist dabei
+größer, damit mehr unterschiedliche Spielsituationen erhalten bleiben:
+
+```bash
+nohup python train_dqn_vanilla.py \
+  --device cuda \
+  --timesteps 5000000 \
+  --buffer-size 500000 \
+  --exploration-fraction 0.4 \
+  --exploration-final-eps 0.01 \
+  --export-every 250000 \
+  --output baselines/baseline_pong_dqn_long.onnx \
+  > logs/pong_dqn_long.log 2>&1 &
+echo $! > logs/pong_dqn_long.pid
+```
+
+`--exploration-fraction 0.4` bedeutet: Epsilon fällt linear von `1.0` auf
+`0.01` während der ersten 40 % des Laufs. Das ist ein neuer Lauf; einen
+schwachen 1-Mio.-Checkpoint nicht fortsetzen, weil dessen Replay-Buffer beim
+Fortsetzen ohnehin nicht wiederhergestellt wird.
+
 ## Kontrollieren, stoppen und fortsetzen
 
 ```bash
