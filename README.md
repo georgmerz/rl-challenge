@@ -158,8 +158,20 @@ automatisch eine turnierkompatible Datei exportiert.
 python train_ppo_sb3.py --timesteps 100000 --output baselines/baseline_ppo.pt2
 ```
 
+### Training in Google Colab
+
+Das Notebook
+[train_ppo_colab.ipynb](train_ppo_colab.ipynb) kann direkt in Colab geöffnet
+werden: [In Google Colab starten](https://colab.research.google.com/github/georgmerz/rl-challenge/blob/main/train_ppo_colab.ipynb).
+Vor dem Ausführen in Colab unter **Runtime → Change runtime type** möglichst
+**T4 GPU** auswählen. Mit **Run all** werden Repository und Abhängigkeiten
+installiert und das Training gestartet. Der jeweils aktuelle Export liegt in
+`baselines/baseline_ppo.pt2` und wird im letzten Notebook-Schritt
+heruntergeladen.
+
 Auf einem Mac mit Apple Silicon verwendet das Skript automatisch den MPS-
-Beschleuniger des M-Chips. Falls nötig, lässt sich die CPU erzwingen:
+Beschleuniger des M-Chips; in Colab wird bei aktivierter GPU automatisch CUDA
+verwendet. Falls nötig, lässt sich die CPU erzwingen:
 
 ```bash
 python train_ppo_sb3.py --device cpu --timesteps 100000

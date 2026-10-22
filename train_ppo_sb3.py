@@ -19,6 +19,7 @@ from gymnasium import spaces
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
+from stable_baselines3.common.env_util import make_vec_env
 from torch import nn
 
 
@@ -153,18 +154,33 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", default="baselines/baseline_ppo.pt2", help="Output path for the exported challenge model.")
     parser.add_argument("--export-every", type=int, default=1_000, help="Checkpoint-Export nach N Schritten (Standard: 1000).")
     parser.add_argument(
+        "--n-envs",
+        type=int,
+        default=4,
+        help="Parallele Zufallsspiele pro PPO-Update (Standard: 4).",
+    )
+    parser.add_argument(
         "--device",
-        default="mps" if torch.backends.mps.is_available() else "cpu",
-        help="MPS auf Apple Silicon, sonst CPU; mit --device cpu überschreibbar.",
+        default=(
+            "mps"
+            if torch.backends.mps.is_available()
+            else "cuda"
+            if torch.cuda.is_available()
+            else "cpu"
+        ),
+        help="MPS auf Apple Silicon, CUDA in Colab, sonst CPU; mit --device cpu überschreibbar.",
     )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    if args.timesteps <= 0 or args.export_every <= 0:
-        raise ValueError("--timesteps und --export-every müssen positiv sein.")
-    env = Player1VsRandomEnv()
+    if args.timesteps <= 0 or args.export_every <= 0 or args.n_envs <= 0:
+        raise ValueError("--timesteps, --export-every und --n-envs müssen positiv sein.")
+    # Four independent games make each policy update contain substantially
+    # more scoring situations than a single long game, while staying simple
+    # enough for a laptop baseline.
+    env = make_vec_env(Player1VsRandomEnv, n_envs=args.n_envs, seed=42)
     try:
         model = PPO(
             "CnnPolicy",
@@ -174,13 +190,13 @@ def main() -> None:
                 "features_extractor_kwargs": {"features_dim": 64},
                 "net_arch": {"pi": [64], "vf": [64]},
             },
-            # Larger, less correlated rollouts and fewer passes over each batch
-            # prevent an early lucky action from dominating the policy.
-            n_steps=512,
-            batch_size=128,
+            # Diverse rollouts, few passes over each batch and a small entropy
+            # bonus provide exploration without freezing the policy.
+            n_steps=256,
+            batch_size=256,
             n_epochs=4,
-            learning_rate=1e-4,
-            ent_coef=0.02,
+            learning_rate=2.5e-4,
+            ent_coef=0.005,
             verbose=1,
             seed=42,
             device=args.device,
