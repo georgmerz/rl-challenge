@@ -22,11 +22,24 @@ rechts (blau). Eine Partie endet, sobald ein Spieler 10 Punkte erreicht.
 
 ## Eure Aufgabe
 
-Implementiert eine PyTorch-Policy mit der unten beschriebenen Schnittstelle,
-exportiert sie als `.pt2` und ladet die Datei im Runner hoch. Ihr dürft die
-Netzarchitektur, das Training und die Bildverarbeitung innerhalb des Modells
-frei wählen. Das Modell erhält keinen Zugriff auf die Umgebung, den Punktestand
-oder frühere Frames.
+Entwickelt eine **Policy**, die aus einem einzelnen aktuellen Bildschirmbild
+eine Lenkaktion für den eigenen Spieler auswählt. Ziel ist es, länger als der
+Gegner zu überleben: Wer mit seinem Kopf den Spielfeldrand oder eine bereits
+gezeichnete Spur berührt, verliert die Runde; der andere Spieler erhält einen
+Punkt. Das Turnier spielt so viele Runden, bis ein Modell **10 Punkte**
+erreicht. Dieses Modell gewinnt das Duell.
+
+Ihr gebt ausschließlich eine exportierte PyTorch-Datei (`.pt2`) ab. Innerhalb
+des Modells dürft ihr Architektur, trainierte Gewichte und Bildverarbeitung
+frei wählen. Der Runner übergibt pro Spielschritt die Eingaben, ruft eure
+Methode `forward(image, player_id)` auf und führt die zurückgegebene Aktion
+aus. Es gibt keinen Zugriff auf das Environment, den Punktestand, die Aktionen
+des Gegners oder vorherige Frames.
+
+Die erste Runde startet mit Seed `42`; nach einem Punkt startet die nächste
+Runde mit einem weiteren festen Seed. Ein Duell wird außerdem nach höchstens
+50.000 Schritten beendet. Ein nicht ladbares oder unzulässiges Modell bricht
+die Partie ab.
 
 ## Zustände / Beobachtungen
 
@@ -35,8 +48,8 @@ ihre eigene Spielerrolle:
 
 | Eingabe | Typ und Form | Bedeutung |
 | --- | --- | --- |
-| `image` | `torch.float32`, `[1, 3, 210, 160]` | Aktuelles RGB-Bild im NCHW-Format. Die Pixelwerte sind bereits auf `[0, 1]` normiert. |
-| `player_id` | `torch.int64`, `[1]` | `1` für den linken/grünen Spieler, `2` für den rechten/blauen Spieler. |
+| `image` | `torch.float32`, exakt `[1, 3, 210, 160]` | Aktuelles RGB-Bild im NCHW-Format. Die Pixelwerte sind bereits auf `[0, 1]` normiert. |
+| `player_id` | `torch.int64`, exakt `[1]` | `1` für den linken/grünen Spieler, `2` für den rechten/blauen Spieler. |
 
 Wichtig: Die Dimensionen des Originalbilds sind `210 × 160 × 3` in der
 Reihenfolge Höhe × Breite × RGB. Der Runner wandelt es für das Modell nach
@@ -46,6 +59,8 @@ Bildmerkmale lösen; eine explizite Historie wird nicht übergeben.
 
 Im Bild sind beide Spielfiguren und ihre bereits gezogenen Spuren sichtbar.
 Eine Kollision mit einer Spur oder dem Rand führt zum Punkt für den Gegner.
+Die `1` in der ersten Dimension von `image` ist die Batch-Größe: Der Runner
+fragt immer genau eine Beobachtung gleichzeitig ab.
 
 ## Aktionen
 
@@ -59,9 +74,20 @@ Euer Modell muss pro Schritt genau **eine** ganzzahlige Atari-Aktion ausgeben:
 | `3` | `LEFT` | Nach links lenken |
 | `4` | `DOWN` | Nach unten lenken |
 
-Die Ausgabe muss ein `int64`-Tensor mit genau einem Wert sein, also etwa
-`tensor([2], dtype=torch.int64)`. Andere Formen oder Aktionsnummern werden vom
+Die Ausgabe muss ein `int64`-Tensor mit **genau einem Element** sein, etwa
+`tensor([2], dtype=torch.int64)`. Auch `tensor(2, dtype=torch.int64)` ist
+zulässig, weil dieser Tensor ebenfalls nur ein Element enthält. Andere
+Datentypen, mehrere Werte und Nummern außerhalb von `0` bis `4` werden vom
 Runner abgewiesen.
+
+## Abgabeformat
+
+Reicht genau **eine** Datei mit der Endung `.pt2` ein; sie darf maximal
+250 MB groß sein. Die Datei muss mit `torch.export.save` erzeugt worden sein.
+Pickle-basierte Exporte wie `torch.save(model, "model.pt")` akzeptiert der
+Runner bewusst nicht. Beim Laden setzt der Runner das Modell in den
+Auswertungsmodus (`eval()`), daher müssen alle zum Entscheiden nötigen
+Gewichte bereits in der exportierten Datei enthalten sein.
 
 ## Festgelegte Modell-Schnittstelle
 
@@ -161,81 +187,6 @@ torch.export.save(exported, "my_policy.pt2")
 Ladet anschließend `my_policy.pt2` als eines der beiden Modelle im Browser hoch.
 Für ein bildbasiertes Beispiel mit einer einfachen Wandvermeidung könnt ihr
 auch `create_baselines.py` lesen oder ausführen.
-
-## Eigenes Modell im Repository entwickeln
-
-Der einfachste Workflow ist, die vorhandene Baseline als Ausgangspunkt zu
-nehmen und schrittweise zu verbessern.
-
-1. Repository klonen und Abhängigkeiten installieren:
-
-   ```bash
-   git clone https://github.com/georgmerz/rl-challenge.git
-   cd rl-challenge
-   python -m venv .venv
-   source .venv/bin/activate
-   pip install -r requirements.txt
-   AutoROM --accept-license
-   ```
-
-2. Die mitgelieferten Referenzmodelle erzeugen und ausprobieren:
-
-   ```bash
-   python create_baselines.py
-   python app.py
-   ```
-
-   Im Browser könnt ihr dann beispielsweise
-   `baselines/baseline_straight.pt2` gegen
-   `baselines/baseline_wall_avoid.pt2` spielen lassen. Die zugehörigen
-   Policy-Klassen stehen in `create_baselines.py` und sind zum Experimentieren
-   gedacht.
-
-3. Legt eine eigene Datei an, zum Beispiel `my_policy.py`. Startet mit einer
-   einfachen Policy, die die Schnittstelle erfüllt:
-
-   ```python
-   import torch
-
-
-   class MyPolicy(torch.nn.Module):
-       def forward(self, image: torch.Tensor, player_id: torch.Tensor) -> torch.Tensor:
-           # Hier kommt eure Bildverarbeitung oder euer neuronales Netz hin.
-           # Beispiel: immer nach oben lenken.
-           return torch.full(
-               (image.shape[0],), 1, dtype=torch.int64, device=image.device
-           )
-   ```
-
-4. Exportiert sie am Ende derselben Datei oder in `export_policy.py` als
-   sichere `.pt2`-Datei. Ein normaler `torch.save(model, ...)`-Export ist
-   **nicht** kompatibel mit dem Runner.
-
-   ```python
-   from my_policy import MyPolicy
-   import torch
-
-   policy = MyPolicy().eval()
-   example_image = torch.zeros((1, 3, 210, 160), dtype=torch.float32)
-   example_player_id = torch.ones((1,), dtype=torch.int64)
-
-   exported = torch.export.export(policy, (example_image, example_player_id))
-   torch.export.save(exported, "my_policy.pt2")
-   ```
-
-   Führt die Exportdatei mit `python export_policy.py` aus und ladet danach
-   `my_policy.pt2` im Browser hoch. Die Datei darf höchstens 250 MB groß sein.
-
-5. Wiederholt den Test nach jeder Änderung gegen beide Referenzmodelle. Achtet
-   besonders darauf, dass `forward(image, player_id)` keine Python-Objekte,
-   NumPy-Arrays oder Zufallsausgaben zurückgibt, sondern stets genau eine
-   gültige `int64`-Aktionsnummer pro Batch-Element.
-
-Für ein lernendes Modell könnt ihr in `MyPolicy` statt der festen Aktion ein
-CNN verwenden und dessen Gewichte mit eurem eigenen RL- oder
-Imitation-Learning-Training füllen. Das Turnier-Repository stellt den
-verlässlichen Export- und Test-Runner bereit; eine Trainingspipeline ist
-absichtlich nicht vorgegeben.
 
 ## Nächste Schritte
 
