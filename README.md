@@ -91,7 +91,8 @@ Runner abgewiesen.
 ## Abgabeformat
 
 Reicht genau **eine** Datei mit der Endung `.pt2` ein; sie darf maximal
-250 MB groß sein. Die Datei muss mit `torch.export.save` erzeugt worden sein.
+250 MB groß sein. Zulässig sind sichere PyTorch-Archive, die mit
+`torch.export.save` oder `torch.jit.trace(...).save(...)` erzeugt wurden.
 Pickle-basierte Exporte wie `torch.save(model, "model.pt")` akzeptiert der
 Runner bewusst nicht. Beim Laden setzt der Runner das Modell in den
 Auswertungsmodus (`eval()`), daher müssen alle zum Entscheiden nötigen
@@ -169,10 +170,9 @@ installiert und das Training gestartet. Der jeweils aktuelle Export liegt in
 `baselines/baseline_ppo.pt2` und wird im letzten Notebook-Schritt
 heruntergeladen.
 
-Wichtig: `torch.export`-Dateien sind versionsabhängig. Das Repository legt
-deshalb PyTorch 2.7.1 fest. Vor dem Start des lokalen Runners einmal
-`pip install -r requirements.txt` ausführen und anschließend das in Colab
-neu exportierte Modell hochladen.
+Die PPO-Baseline verwendet beim Export TorchScript. Das Format bleibt zwischen
+der aktuellen Colab-Installation und älteren lokalen PyTorch-Versionen
+kompatibel.
 
 Auf einem Mac mit Apple Silicon verwendet das Skript automatisch den MPS-
 Beschleuniger des M-Chips; in Colab wird bei aktivierter GPU automatisch CUDA

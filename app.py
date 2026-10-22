@@ -29,21 +29,24 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_MODEL_BYTES
 
 
 def load_exported_model(path: Path):
-    """Load an exported PyTorch model. Pickled Python model files are rejected."""
+    """Load a safe PyTorch export without deserializing Python pickle code."""
     if path.suffix != ".pt2":
         raise ValueError("Es sind ausschließlich exportierte PyTorch-Dateien (.pt2) erlaubt.")
     if not hasattr(torch, "export") or not hasattr(torch.export, "load"):
         raise RuntimeError("Für .pt2-Modelle wird PyTorch >= 2.2 benötigt. Bitte `pip install -r requirements.txt` erneut ausführen.")
     try:
         exported = torch.export.load(str(path))
-    except (KeyError, RuntimeError, ValueError) as error:
-        raise ValueError(
-            "Das .pt2-Modell kann nicht geladen werden. Es wurde vermutlich mit "
-            "einer nicht kompatiblen PyTorch-Version exportiert. Bitte in Colab "
-            "und lokal `pip install -r requirements.txt` ausführen, danach das "
-            "Modell erneut trainieren und herunterladen."
-        ) from error
-    model = exported.module()
+        model = exported.module()
+    except (KeyError, RuntimeError, ValueError):
+        try:
+            # The PPO baseline uses TorchScript. It is readable across more
+            # PyTorch versions than torch.export archives produced by Colab.
+            model = torch.jit.load(str(path), map_location="cpu")
+        except (RuntimeError, ValueError) as error:
+            raise ValueError(
+                "Das .pt2-Modell kann nicht geladen werden. Bitte ein Modell "
+                "aus diesem Repository erneut exportieren und hochladen."
+            ) from error
     model.eval()
     return model
 

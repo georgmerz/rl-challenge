@@ -125,9 +125,12 @@ def export_challenge_policy(model: PPO, output: Path) -> None:
     ).eval()
     image = torch.zeros((1, 3, 210, 160), dtype=torch.float32)
     player_id = torch.ones((1,), dtype=torch.int64)
-    exported = torch.export.export(policy, (image, player_id))
     temporary_output = output.with_suffix(".tmp.pt2")
-    torch.export.save(exported, str(temporary_output))
+    # TorchScript is intentionally used here instead of torch.export: Colab
+    # regularly upgrades PyTorch, while the challenge runner may use an older
+    # local version. TorchScript keeps this baseline portable between both.
+    traced = torch.jit.trace(policy, (image, player_id), check_trace=False)
+    traced.save(str(temporary_output))
     temporary_output.replace(output)
 
 
