@@ -18,6 +18,7 @@ import torch
 from gymnasium import spaces
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from torch import nn
 
 
@@ -62,28 +63,61 @@ class Player1VsRandomEnv(gym.Env):
         self.env.close()
 
 
+class SmallCNN(BaseFeaturesExtractor):
+    """Small image encoder: about 50,000 trainable weights in total."""
+
+    def __init__(self, observation_space: spaces.Box, features_dim: int = 64) -> None:
+        super().__init__(observation_space, features_dim)
+        channels = observation_space.shape[0]
+        self.cnn = nn.Sequential(
+            nn.Conv2d(channels, 16, kernel_size=5, stride=4),
+            nn.ReLU(),
+            nn.Conv2d(16, 32, kernel_size=3, stride=2),
+            nn.ReLU(),
+            # Fixed pooling is supported by Apple's MPS backend. At this
+            # point the feature map is 25 x 19, so this produces 6 x 4.
+            nn.AvgPool2d(kernel_size=4, stride=4),
+            nn.Flatten(),
+        )
+        self.linear = nn.Sequential(
+            nn.Linear(32 * 6 * 4, features_dim),
+            nn.ReLU(),
+        )
+
+    def forward(self, observations: torch.Tensor) -> torch.Tensor:
+        return self.linear(self.cnn(observations))
+
+
 class ChallengePolicy(nn.Module):
     """Turn an SB3 CNN policy into the challenge's two-input API."""
 
-    def __init__(self, policy: nn.Module) -> None:
+    def __init__(self, features_extractor: nn.Module, mlp_extractor: nn.Module, action_net: nn.Module) -> None:
         super().__init__()
-        self.policy = policy
+        # Copy only the modules used for actions. Copying the complete SB3
+        # policy fails on recent PyTorch versions because it also contains
+        # non-leaf tensors used during training.
+        self.features_extractor = copy.deepcopy(features_extractor).cpu()
+        self.mlp_extractor = copy.deepcopy(mlp_extractor).cpu()
+        self.action_net = copy.deepcopy(action_net).cpu()
 
     def forward(self, image: torch.Tensor, player_id: torch.Tensor) -> torch.Tensor:
         # SB3 normally performs image-space checks in Python before calling
         # these modules. Calling the modules directly keeps torch.export free
         # from those checks. ``image`` is already normalized exactly as SB3's
         # preprocessing would normalize the uint8 training observations.
-        features = self.policy.features_extractor(image)
-        latent_pi = self.policy.mlp_extractor.forward_actor(features)
-        logits = self.policy.action_net(latent_pi)
+        features = self.features_extractor(image)
+        latent_pi = self.mlp_extractor.forward_actor(features)
+        logits = self.action_net(latent_pi)
         return torch.argmax(logits, dim=1).to(torch.int64)
 
 
 def export_challenge_policy(model: PPO, output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
-    # Exporting a copy avoids moving the policy away from a GPU while training.
-    policy = ChallengePolicy(copy.deepcopy(model.policy).cpu().eval())
+    policy = ChallengePolicy(
+        model.policy.features_extractor,
+        model.policy.mlp_extractor,
+        model.policy.action_net,
+    ).eval()
     image = torch.zeros((1, 3, 210, 160), dtype=torch.float32)
     player_id = torch.ones((1,), dtype=torch.int64)
     exported = torch.export.export(policy, (image, player_id))
@@ -114,6 +148,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timesteps", type=int, default=100_000, help="Training steps (default: 100000).")
     parser.add_argument("--output", default="baselines/baseline_ppo.pt2", help="Output path for the exported challenge model.")
     parser.add_argument("--export-every", type=int, default=1_000, help="Checkpoint-Export nach N Schritten (Standard: 1000).")
+    parser.add_argument(
+        "--device",
+        default="mps" if torch.backends.mps.is_available() else "cpu",
+        help="MPS auf Apple Silicon, sonst CPU; mit --device cpu überschreibbar.",
+    )
     return parser.parse_args()
 
 
@@ -129,8 +168,14 @@ def main() -> None:
             learning_rate=2.5e-4,
             n_steps=128,
             batch_size=64,
+            policy_kwargs={
+                "features_extractor_class": SmallCNN,
+                "features_extractor_kwargs": {"features_dim": 64},
+                "net_arch": {"pi": [64], "vf": [64]},
+            },
             verbose=1,
             seed=42,
+            device=args.device,
         )
         output = Path(args.output)
         model.learn(

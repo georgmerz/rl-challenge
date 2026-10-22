@@ -146,11 +146,19 @@ baselines/baseline_wall_avoid.pt2
 [Stable-Baselines3](https://stable-baselines3.readthedocs.io/) und trainiert
 eine CNN-Policy mit PPO. Dies ist absichtlich ein Minimalbeispiel: Die Policy
 trainiert nur als Spieler 1 auf der linken/grünen Seite gegen einen zufälligen
-Spieler 2. Nach dem Training wird automatisch eine turnierkompatible Datei
-exportiert.
+Spieler 2. Das CNN ist bewusst klein (etwa 50.000 Gewichte), damit Training
+und Experimentieren auf einem Laptop zügig bleiben. Nach dem Training wird
+automatisch eine turnierkompatible Datei exportiert.
 
 ```bash
 python train_ppo_sb3.py --timesteps 100000 --output baselines/baseline_ppo.pt2
+```
+
+Auf einem Mac mit Apple Silicon verwendet das Skript automatisch den MPS-
+Beschleuniger des M-Chips. Falls nötig, lässt sich die CPU erzwingen:
+
+```bash
+python train_ppo_sb3.py --device cpu --timesteps 100000
 ```
 
 Das Skript überschreibt `baselines/baseline_ppo.pt2` automatisch nach jeweils
