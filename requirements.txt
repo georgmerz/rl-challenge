@@ -1,6 +1,8 @@
 flask>=3.0
 numpy>=1.26
-torch>=2.2
+# torch.export-Dateien sind versionsabhängig. Colab und der lokale Runner
+# müssen deshalb dieselbe Version verwenden.
+torch==2.7.1
 pettingzoo[atari]>=1.24
 AutoROM[accept-rom-license]>=0.6
 pygame>=2.5

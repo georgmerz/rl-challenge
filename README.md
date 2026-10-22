@@ -169,6 +169,11 @@ installiert und das Training gestartet. Der jeweils aktuelle Export liegt in
 `baselines/baseline_ppo.pt2` und wird im letzten Notebook-Schritt
 heruntergeladen.
 
+Wichtig: `torch.export`-Dateien sind versionsabhängig. Das Repository legt
+deshalb PyTorch 2.7.1 fest. Vor dem Start des lokalen Runners einmal
+`pip install -r requirements.txt` ausführen und anschließend das in Colab
+neu exportierte Modell hochladen.
+
 Auf einem Mac mit Apple Silicon verwendet das Skript automatisch den MPS-
 Beschleuniger des M-Chips; in Colab wird bei aktivierter GPU automatisch CUDA
 verwendet. Falls nötig, lässt sich die CPU erzwingen:
