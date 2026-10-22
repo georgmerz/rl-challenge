@@ -15,6 +15,7 @@ pipeline. It uses one shared policy for both players and trains it in self-play.
 from __future__ import annotations
 
 import argparse
+import inspect
 import random
 from pathlib import Path
 
@@ -81,14 +82,14 @@ def export_policy(model: ActorCritic, output: Path) -> None:
     policy = ExportedPolicy(model.cpu()).eval()
     example_image = torch.zeros((1, *OBSERVATION_SHAPE), dtype=torch.float32)
     example_player_id = torch.ones((1,), dtype=torch.int64)
-    torch.onnx.export(
-        policy,
-        (example_image, example_player_id),
-        str(output),
-        input_names=["image", "player_id"],
-        output_names=["action"],
-        opset_version=17,
-    )
+    export_kwargs = {
+        "input_names": ["image", "player_id"],
+        "output_names": ["action"],
+        "opset_version": 17,
+    }
+    if "dynamo" in inspect.signature(torch.onnx.export).parameters:
+        export_kwargs["dynamo"] = False
+    torch.onnx.export(policy, (example_image, example_player_id), str(output), **export_kwargs)
 
 
 def train(args: argparse.Namespace) -> Path:

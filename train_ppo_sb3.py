@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import inspect
 from pathlib import Path
 import gymnasium as gym
 import numpy as np
@@ -127,14 +128,14 @@ def export_challenge_policy(model: PPO, output: Path) -> None:
     image = torch.zeros((1, 3, 210, 160), dtype=torch.float32)
     player_id = torch.ones((1,), dtype=torch.int64)
     temporary_output = output.with_suffix(".tmp.onnx")
-    torch.onnx.export(
-        policy,
-        (image, player_id),
-        str(temporary_output),
-        input_names=["image", "player_id"],
-        output_names=["action"],
-        opset_version=17,
-    )
+    export_kwargs = {
+        "input_names": ["image", "player_id"],
+        "output_names": ["action"],
+        "opset_version": 17,
+    }
+    if "dynamo" in inspect.signature(torch.onnx.export).parameters:
+        export_kwargs["dynamo"] = False
+    torch.onnx.export(policy, (image, player_id), str(temporary_output), **export_kwargs)
     temporary_output.replace(output)
 
 

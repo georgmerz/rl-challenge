@@ -1,0 +1,9 @@
+# Google Colab already includes PyTorch. These are only the packages needed
+# for PPO training, ONNX export and the submission validator.
+numpy>=1.26,<2
+flask>=3.0
+pettingzoo[atari]>=1.24
+AutoROM[accept-rom-license]>=0.6
+stable-baselines3>=2.3,<3
+onnx>=1.18,<1.19
+onnxruntime>=1.16

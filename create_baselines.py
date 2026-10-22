@@ -4,6 +4,7 @@ Run after installing requirements.txt:
     python create_baselines.py
 """
 
+import inspect
 from pathlib import Path
 
 import torch
@@ -104,14 +105,14 @@ def export_policy(policy: torch.nn.Module, filename: str) -> None:
     policy.eval()
     image = torch.zeros(IMAGE_SHAPE, dtype=torch.float32)
     player_id = torch.ones((1,), dtype=torch.int64)
-    torch.onnx.export(
-        policy,
-        (image, player_id),
-        str(OUT_DIR / filename),
-        input_names=["image", "player_id"],
-        output_names=["action"],
-        opset_version=17,
-    )
+    export_kwargs = {
+        "input_names": ["image", "player_id"],
+        "output_names": ["action"],
+        "opset_version": 17,
+    }
+    if "dynamo" in inspect.signature(torch.onnx.export).parameters:
+        export_kwargs["dynamo"] = False
+    torch.onnx.export(policy, (image, player_id), str(OUT_DIR / filename), **export_kwargs)
 
 
 if __name__ == "__main__":
