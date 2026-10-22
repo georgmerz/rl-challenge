@@ -21,8 +21,8 @@ Umgebung mit `.venv\Scripts\Activate.ps1`.
 
 ## Aufgabe und Turnierregeln
 
-Eine Policy steuert einen Pong-Schläger ausschließlich aus dem aktuellen
-Bild. Sie soll den Ball am eigenen Schläger abfangen und am gegnerischen
+Eine Policy steuert einen Pong-Schläger ausschließlich aus der gelieferten
+Bildfolge. Sie soll den Ball am eigenen Schläger abfangen und am gegnerischen
 vorbeispielen. Erreicht der Ball eine Seite, erhält der erfolgreiche Spieler
 einen Punkt; die Runde endet sofort und das nächste Spiel beginnt.
 
@@ -149,12 +149,14 @@ Epsilon-Greedy-Exploration. CleanRL trainiert Atari Pong für **10 Millionen
 Entscheidungsschritte** (bei Frame-Skip 4 sind das 40 Millionen Rohframes).
 Für dieses einfachere Duell gegen eine feste Baseline ist 1 Million Schritte
 ein sinnvoller erster Colab-Lauf; 20.000 Schritte testen nur Installation und
-Export.
+Export. Sichtbares Spielverhalten kann mehrere Millionen Schritte benötigen.
+Für einen längeren Lauf mit gestreckter Exploration siehe
+[SERVER_TRAINING.md](SERVER_TRAINING.md).
 
 Für einen längeren Linux-/NVIDIA-Serverlauf mit Checkpoints und Download gibt
 es die Anleitung [SERVER_TRAINING.md](SERVER_TRAINING.md).
 
-Das Skript exportiert standardmäßig nach jeweils 1.000 Schritten einen
+Das Skript exportiert standardmäßig nach jeweils 100.000 Schritten einen
 Checkpoint. Ein Testlauf prüft nur die Technik, nicht die Spielstärke:
 
 ```bash
