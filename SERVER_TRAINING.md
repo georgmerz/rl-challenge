@@ -51,14 +51,14 @@ Die abschließende Datei heißt `baselines/baseline_pong_dqn.onnx`.
 Pong zeigt bei einem DQN oft erst nach mehreren Millionen Entscheidungen einen
 sichtbaren Fortschritt. Für einen aussagekräftigeren Serverlauf daher fünf
 Millionen Schritte wählen und die Zufallsexploration über die ersten zwei
-Millionen Schritte absenken (`0.4 * 5.000.000`). Der Replay-Buffer ist dabei
-größer, damit mehr unterschiedliche Spielsituationen erhalten bleiben:
+Millionen Schritte absenken (`0.4 * 5.000.000`). Der standardmäßige
+Replay-Buffer mit 100.000 Einträgen bleibt bewusst unverändert, damit der
+Arbeitsspeicherbedarf beherrschbar bleibt:
 
 ```bash
 nohup python train_dqn_vanilla.py \
   --device cuda \
   --timesteps 5000000 \
-  --buffer-size 500000 \
   --exploration-fraction 0.4 \
   --exploration-final-eps 0.01 \
   --export-every 250000 \
