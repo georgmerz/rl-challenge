@@ -1,8 +1,7 @@
-"""Train a simple Atari Surround PPO baseline using Stable-Baselines3.
+"""Minimal PPO example for player 1 (green/left) in Atari Surround.
 
-The PPO agent alternates between the green/left and blue/right side and plays
-against a random opponent. The trained model is exported to the challenge's
-safe PyTorch ``.pt2`` format.
+The agent always plays player 1 against a random opponent. The trained policy
+is exported to the challenge's safe PyTorch ``.pt2`` format.
 
 Example:
     python train_ppo_sb3.py --timesteps 100000 --output baselines/baseline_ppo.pt2
@@ -12,8 +11,6 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Any
-
 import gymnasium as gym
 import numpy as np
 import torch
@@ -22,8 +19,8 @@ from stable_baselines3 import PPO
 from torch import nn
 
 
-class SurroundVsRandomEnv(gym.Env[np.ndarray, int]):
-    """Expose one side of PettingZoo Surround as a standard Gymnasium env."""
+class Player1VsRandomEnv(gym.Env):
+    """Player 1 (left/green) versus a random player 2."""
 
     metadata = {"render_modes": []}
 
@@ -33,42 +30,31 @@ class SurroundVsRandomEnv(gym.Env[np.ndarray, int]):
         self.env = surround_v2.parallel_env(render_mode=None)
         self.observation_space = spaces.Box(0, 255, shape=(210, 160, 3), dtype=np.uint8)
         self.action_space = spaces.Discrete(5)
-        self.episode_number = 0
-        self.controlled_agent: str | None = None
-        self.opponent_agent: str | None = None
+        self.player_1: str | None = None
+        self.player_2: str | None = None
 
-    def reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None):
+    def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
-        observations, infos = self.env.reset(seed=seed)
-        agent_names = list(self.env.possible_agents)
-        if len(agent_names) != 2:
-            raise RuntimeError(f"Surround erwartet zwei Agents, erhalten: {agent_names}")
-
-        # PettingZoo uses the first name for right/blue and the second for
-        # left/green. Alternate the controlled role every episode.
-        right_agent, left_agent = agent_names
-        if self.episode_number % 2 == 0:
-            self.controlled_agent, self.opponent_agent = left_agent, right_agent
-        else:
-            self.controlled_agent, self.opponent_agent = right_agent, left_agent
-        self.episode_number += 1
-        return observations[self.controlled_agent], infos.get(self.controlled_agent, {})
+        observations, _ = self.env.reset(seed=seed)
+        # surround_v2: first_0 = right/blue, second_0 = left/green.
+        self.player_2, self.player_1 = self.env.possible_agents
+        return observations[self.player_1], {}
 
     def step(self, action: int):
-        if self.controlled_agent is None or self.opponent_agent is None:
+        if self.player_1 is None or self.player_2 is None:
             raise RuntimeError("reset() muss vor step() aufgerufen werden.")
         actions = {
-            self.controlled_agent: int(action),
-            self.opponent_agent: int(self.np_random.integers(self.action_space.n)),
+            self.player_1: int(action),
+            self.player_2: int(self.np_random.integers(5)),
         }
         observations, rewards, terminations, truncations, infos = self.env.step(actions)
-        terminated = bool(terminations.get(self.controlled_agent, False))
-        truncated = bool(truncations.get(self.controlled_agent, False))
+        terminated = bool(terminations.get(self.player_1, False))
+        truncated = bool(truncations.get(self.player_1, False))
         if terminated or truncated:
             observation = np.zeros(self.observation_space.shape, dtype=np.uint8)
         else:
-            observation = observations[self.controlled_agent]
-        return observation, float(rewards.get(self.controlled_agent, 0.0)), terminated, truncated, infos.get(self.controlled_agent, {})
+            observation = observations[self.player_1]
+        return observation, float(rewards.get(self.player_1, 0.0)), terminated, truncated, {}
 
     def close(self) -> None:
         self.env.close()
@@ -105,32 +91,23 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train a Stable-Baselines3 PPO baseline for Atari Surround.")
     parser.add_argument("--timesteps", type=int, default=100_000, help="Training steps (default: 100000).")
     parser.add_argument("--output", default="baselines/baseline_ppo.pt2", help="Output path for the exported challenge model.")
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--device", default="auto", help="auto, cpu, mps or cuda")
-    parser.add_argument("--n-steps", type=int, default=256, help="PPO rollout length.")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    if args.timesteps <= 0 or args.n_steps <= 1:
-        raise ValueError("--timesteps muss positiv und --n-steps mindestens 2 sein.")
-    env = SurroundVsRandomEnv()
+    if args.timesteps <= 0:
+        raise ValueError("--timesteps muss positiv sein.")
+    env = Player1VsRandomEnv()
     try:
         model = PPO(
             "CnnPolicy",
             env,
             learning_rate=2.5e-4,
-            n_steps=args.n_steps,
-            batch_size=min(64, args.n_steps),
-            n_epochs=4,
-            gamma=0.99,
-            gae_lambda=0.95,
-            clip_range=0.2,
-            ent_coef=0.01,
+            n_steps=128,
+            batch_size=64,
             verbose=1,
-            seed=args.seed,
-            device=args.device,
+            seed=42,
         )
         model.learn(total_timesteps=args.timesteps, progress_bar=False)
         output = Path(args.output)

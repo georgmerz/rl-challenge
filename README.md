@@ -144,32 +144,28 @@ baselines/baseline_wall_avoid.pt2
 
 `train_ppo_sb3.py` verwendet die etablierte Bibliothek
 [Stable-Baselines3](https://stable-baselines3.readthedocs.io/) und trainiert
-eine CNN-Policy mit PPO. Die Policy spielt gegen einen zufälligen Gegner und
-übernimmt in aufeinanderfolgenden Episoden abwechselnd die grüne/linke und
-blaue/rechte Seite. Nach dem Training wird automatisch eine
-turnierkompatible Datei exportiert.
+eine CNN-Policy mit PPO. Dies ist absichtlich ein Minimalbeispiel: Die Policy
+trainiert nur als Spieler 1 auf der linken/grünen Seite gegen einen zufälligen
+Spieler 2. Nach dem Training wird automatisch eine turnierkompatible Datei
+exportiert.
 
 ```bash
 python train_ppo_sb3.py --timesteps 100000 --output baselines/baseline_ppo.pt2
 ```
 
-Auf Apple-Silicon-Rechnern kann optional die GPU verwendet werden:
-
-```bash
-python train_ppo_sb3.py --timesteps 100000 --device mps --output baselines/baseline_ppo.pt2
-```
-
-Für einen kurzen technischen Test genügen wenige Schritte; die so erzeugte
-Policy ist jedoch noch nicht sinnvoll trainiert:
+Für einen kurzen technischen Test verwendet das Skript mindestens einen
+Rollout mit 128 Schritten; die so erzeugte Policy ist noch nicht sinnvoll
+trainiert:
 
 ```bash
 python train_ppo_sb3.py --timesteps 128 --output baselines/test_ppo.pt2
 ```
 
-Für bessere Resultate sind längere Trainingsläufe, ein stärkerer Gegner als
-die Zufallspolicy, mehrere parallele Environments und Hyperparameter-Tuning
-naheliegende Erweiterungen. `train_ppo.py` bleibt als reine PyTorch-
-Selbstspiel-Variante zum Nachlesen verfügbar.
+Für ein echtes Turniermodell muss diese Vorlage erweitert werden, weil im
+Turnier nach jeder Runde die Seiten getauscht werden. Sinnvolle nächste Schritte
+sind daher: auch Spieler 2 trainieren, einen stärkeren Gegner verwenden oder
+Selbstspiel einsetzen. `train_ppo.py` bleibt als reine PyTorch-Selbstspiel-
+Variante zum Nachlesen verfügbar.
 
 ## Beispiel für eine exportierbare Policy
 
