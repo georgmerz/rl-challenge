@@ -17,8 +17,10 @@ PORT=5001 python app.py
 
 Danach im Browser `http://127.0.0.1:5001` öffnen.
 
-Wählt dort zwei `.pt2`-Modelle aus. Spieler 1 startet links (grün), Spieler 2
-rechts (blau). Eine Partie endet, sobald ein Spieler 10 Punkte erreicht.
+Wählt dort zwei `.pt2`-Modelle aus. Ein Duell besteht aus genau zehn Runden.
+In Runde 1 startet Spieler 1 links (grün) und Spieler 2 rechts (blau); danach
+werden die Seiten in jeder Runde getauscht. Der Endstand nach zehn Runden
+entscheidet das Duell.
 
 ## Eure Aufgabe
 
@@ -26,8 +28,10 @@ Entwickelt eine **Policy**, die aus einem einzelnen aktuellen Bildschirmbild
 eine Lenkaktion für den eigenen Spieler auswählt. Ziel ist es, länger als der
 Gegner zu überleben: Wer mit seinem Kopf den Spielfeldrand oder eine bereits
 gezeichnete Spur berührt, verliert die Runde; der andere Spieler erhält einen
-Punkt. Das Turnier spielt so viele Runden, bis ein Modell **10 Punkte**
-erreicht. Dieses Modell gewinnt das Duell.
+Punkt. Jedes Duell besteht aus **zehn Runden**. Spieler 1 und Spieler 2
+wechseln nach jeder Runde die Seiten, damit beide fünfmal links/grün und
+fünfmal rechts/blau spielen. Wer nach zehn Runden mehr Punkte hat, gewinnt;
+bei gleichem Punktestand endet das Duell unentschieden.
 
 Ihr gebt ausschließlich eine exportierte PyTorch-Datei (`.pt2`) ab. Innerhalb
 des Modells dürft ihr Architektur, trainierte Gewichte und Bildverarbeitung

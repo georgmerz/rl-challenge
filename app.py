@@ -19,7 +19,7 @@ UPLOAD_DIR = BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 MAX_MODEL_BYTES = 250 * 1024 * 1024
 ACTION_COUNT = 5
-WINNING_SCORE = 10
+TOTAL_ROUNDS = 10
 MAX_MATCH_STEPS = 50000
 FRAME_DELAY_SECONDS = 0.015
 ROUND_RESET_DELAY_SECONDS = 0.2
@@ -43,9 +43,8 @@ def load_exported_model(path: Path):
 class ModelAgent:
     """Adapter from the public challenge API to a PyTorch exported model."""
 
-    def __init__(self, path: Path, player_id: int):
+    def __init__(self, path: Path):
         self.model = load_exported_model(path)
-        self.player_id = player_id
 
     @staticmethod
     def _image_tensor(image: np.ndarray) -> torch.Tensor:
@@ -54,9 +53,9 @@ class ModelAgent:
         # Public API: uint8 HWC. Model API: float32 NCHW, values in [0, 1].
         return torch.from_numpy(image).permute(2, 0, 1).unsqueeze(0).contiguous().float() / 255.0
 
-    def act(self, image: np.ndarray) -> int:
+    def act(self, image: np.ndarray, player_id: int) -> int:
         image_tensor = self._image_tensor(image)
-        player_tensor = torch.tensor([self.player_id], dtype=torch.int64)
+        player_tensor = torch.tensor([player_id], dtype=torch.int64)
         with torch.inference_mode():
             output = self.model(image_tensor, player_tensor)
         output = torch.as_tensor(output).detach().cpu()
@@ -89,6 +88,10 @@ class GameState:
     message: str = "Noch keine Partie gestartet"
     frame: str | None = None
     score: dict[str, int] | None = None
+    round: int = 0
+    total_rounds: int = TOTAL_ROUNDS
+    player_1_side: str | None = None
+    player_2_side: str | None = None
     winner: str | None = None
     error: str | None = None
 
@@ -103,43 +106,66 @@ class GameSession:
         with self.lock:
             return self.state.__dict__.copy()
 
-    def start(self, model_1: Path, model_2: Path, points: int = WINNING_SCORE):
+    def start(self, model_1: Path, model_2: Path, rounds: int = TOTAL_ROUNDS):
         with self.lock:
             if self.thread and self.thread.is_alive():
                 raise RuntimeError("Es läuft bereits eine Partie.")
-            self.state = GameState(status="starting", message="Modelle werden geladen...", score={"Spieler 1": 0, "Spieler 2": 0})
-            self.thread = threading.Thread(target=self._run, args=(model_1, model_2, points), daemon=True)
+            self.state = GameState(
+                status="starting",
+                message="Modelle werden geladen...",
+                score={"Spieler 1": 0, "Spieler 2": 0},
+                total_rounds=rounds,
+            )
+            self.thread = threading.Thread(target=self._run, args=(model_1, model_2, rounds), daemon=True)
             self.thread.start()
 
-    def _run(self, model_1_path: Path, model_2_path: Path, points: int):
+    def _run(self, model_1_path: Path, model_2_path: Path, rounds: int):
         env = None
         try:
             from pettingzoo.atari import surround_v2
 
-            # PettingZoo's first_0 controls the right/blue player and second_0 controls the left/green player.
-            # The public UI keeps the common convention: player 1 left, player 2 right.
-            agent_1 = ModelAgent(model_1_path, player_id=1)
-            agent_2 = ModelAgent(model_2_path, player_id=2)
+            # PettingZoo's first_0 controls the right/blue player and second_0 controls
+            # the left/green player. The uploaded competitors alternate these sides.
+            agent_1 = ModelAgent(model_1_path)
+            agent_2 = ModelAgent(model_2_path)
             env = surround_v2.parallel_env(render_mode="rgb_array")
             observations, infos = env.reset(seed=42)
             names = list(env.possible_agents)
             if len(names) != 2:
                 raise RuntimeError(f"Unerwartete Agentenzahl: {names}")
             right_name, left_name = names[0], names[1]
-            id_by_name = {left_name: 1, right_name: 2}
-            agents = {left_name: agent_1, right_name: agent_2}
+            player_id_by_name = {left_name: 1, right_name: 2}
             score = {"Spieler 1": 0, "Spieler 2": 0}
             round_seed = 42
+            round_number = 1
             step_count = 0
+
+            def set_round_players():
+                # Odd rounds: player 1 uses the left/green side. Even rounds swap sides.
+                if round_number % 2:
+                    agents = {left_name: agent_1, right_name: agent_2}
+                    competitor_by_name = {left_name: "Spieler 1", right_name: "Spieler 2"}
+                    player_1_side, player_2_side = "links / grün", "rechts / blau"
+                else:
+                    agents = {left_name: agent_2, right_name: agent_1}
+                    competitor_by_name = {left_name: "Spieler 2", right_name: "Spieler 1"}
+                    player_1_side, player_2_side = "rechts / blau", "links / grün"
+                with self.lock:
+                    self.state.round = round_number
+                    self.state.player_1_side = player_1_side
+                    self.state.player_2_side = player_2_side
+                return agents, competitor_by_name
+
+            agents, competitor_by_name = set_round_players()
             with self.lock:
                 self.state.status = "running"
-                self.state.message = "Partie läuft"
+                self.state.message = f"Runde {round_number} von {rounds} läuft"
 
-            while score["Spieler 1"] < points and score["Spieler 2"] < points and step_count < MAX_MATCH_STEPS:
+            while round_number <= rounds and step_count < MAX_MATCH_STEPS:
                 actions = {}
                 for name in names:
                     image = observations[name]
-                    actions[name] = agents[name].act(image)
+                    actions[name] = agents[name].act(image, player_id_by_name[name])
                 observations, rewards, terminations, truncations, infos = env.step(actions)
                 step_count += 1
                 frame = env.render()
@@ -147,26 +173,33 @@ class GameSession:
                 point_scored = False
                 for name, reward in rewards.items():
                     if reward > 0:
-                        score[f"Spieler {id_by_name[name]}"] += 1
+                        score[competitor_by_name[name]] += 1
                         point_scored = True
                 with self.lock:
                     self.state.frame = encode_frame(frame)
                     self.state.score = score.copy()
 
-                game_finished = score["Spieler 1"] >= points or score["Spieler 2"] >= points
-                if point_scored and not game_finished:
+                if point_scored:
+                    if round_number >= rounds:
+                        break
                     time.sleep(ROUND_RESET_DELAY_SECONDS)
                     round_seed += 1
+                    round_number += 1
                     observations, infos = env.reset(seed=round_seed)
+                    agents, competitor_by_name = set_round_players()
                     with self.lock:
                         self.state.frame = encode_frame(env.render())
+                        self.state.message = f"Runde {round_number} von {rounds} läuft"
                     time.sleep(FRAME_DELAY_SECONDS)
                     continue
                 if any(terminations.values()) or any(truncations.values()):
                     break
                 time.sleep(FRAME_DELAY_SECONDS)
 
-            if score["Spieler 1"] == score["Spieler 2"]:
+            if step_count >= MAX_MATCH_STEPS and round_number <= rounds:
+                winner = None
+                message = "Zeitlimit erreicht"
+            elif score["Spieler 1"] == score["Spieler 2"]:
                 winner = None
                 message = "Unentschieden"
             else:

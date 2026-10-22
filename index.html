@@ -23,17 +23,18 @@
     <section class="controls">
       <h2>Modelle laden</h2>
       <form id="form">
-        <label for="model1">Modell · Spieler 1 links</label>
+        <label for="model1">Modell · Spieler 1</label>
         <input id="model1" name="model_1" type="file" accept=".pt2" required>
-        <label for="model2">Modell · Spieler 2 rechts</label>
+        <label for="model2">Modell · Spieler 2</label>
         <input id="model2" name="model_2" type="file" accept=".pt2" required>
         <button id="start" type="submit">Partie starten</button>
       </form>
-      <div class="hint">Eingabe: aktuelles RGB-Bild plus Spielerrolle. Ausgabe: eine Surround-Aktion von 0 bis 4.</div>
+      <div class="hint">10 Runden pro Duell; die linke/grüne und rechte/blaue Seite wechseln nach jeder Runde. Eingabe: aktuelles RGB-Bild plus Spielerrolle. Ausgabe: eine Surround-Aktion von 0 bis 4.</div>
       <div id="status" class="status"></div>
     </section>
     <section class="arena">
-      <div class="score"><span>Spieler 1 links <strong id="s1">0</strong></span><span>Spieler 2 rechts <strong id="s2">0</strong></span></div>
+      <div class="score"><span>Spieler 1 <strong id="s1">0</strong></span><span>Spieler 2 <strong id="s2">0</strong></span></div>
+      <div id="round" class="message">Noch keine Runde gestartet.</div>
       <canvas id="canvas" width="800" height="1050"></canvas>
       <div id="message" class="message">Bitte zwei Modelle auswählen.</div>
     </section>
@@ -46,6 +47,12 @@
       const res = await fetch('/api/state'); const state = await res.json();
       document.querySelector('#s1').textContent = state.score?.['Spieler 1'] ?? 0;
       document.querySelector('#s2').textContent = state.score?.['Spieler 2'] ?? 0;
+      const round = document.querySelector('#round');
+      if (state.round) {
+        round.textContent = `Runde ${state.round} von ${state.total_rounds} · Spieler 1: ${state.player_1_side} · Spieler 2: ${state.player_2_side}`;
+      } else {
+        round.textContent = 'Noch keine Runde gestartet.';
+      }
       message.textContent = state.error || state.message;
       if (state.frame) { const img = new Image(); img.onload = () => { canvas.width=img.width; canvas.height=img.height; ctx.drawImage(img,0,0); }; img.src=state.frame; }
       if (state.status === 'running' || state.status === 'starting') start.disabled = true; else start.disabled = false;
