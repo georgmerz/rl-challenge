@@ -1,8 +1,9 @@
-# RL Challenge: Atari Surround Tournament
+# RL Challenge: Atari Pong Tournament
 
-In dieser Challenge entwickeln Teams eine Policy für das Atari-Spiel **Surround**.
-Zwei exportierte PyTorch-Modelle treten anschließend im lokalen Turnier-Runner
-gegeneinander an. Das Browser-Frontend zeigt das Spielfeld und den Spielstand.
+In dieser Challenge entwickeln Teams eine Policy für **Atari Pong**. Zwei
+eingereichte ONNX-Modelle spielen im lokalen Browser-Runner gegeneinander.
+Pong ist bewusst die zugänglichere Alternative zu Surround: Ein Punkt liefert
+sofort ein klares positives bzw. negatives Lernsignal.
 
 ## Lokalen Runner starten
 
@@ -15,100 +16,76 @@ AutoROM --accept-license
 PORT=5001 python app.py
 ```
 
-Danach im Browser `http://127.0.0.1:5001` öffnen.
+Danach `http://127.0.0.1:5001` öffnen. Unter Windows aktiviert ihr die
+Umgebung mit `.venv\Scripts\Activate.ps1`.
 
-Unter Windows in PowerShell lautet die Aktivierung der virtuellen Umgebung
-`.venv\\Scripts\\Activate.ps1`; falls Port 5000 belegt ist, startet ihr mit
-`$env:PORT=5001; python app.py`.
+## Aufgabe und Turnierregeln
 
-Wählt dort zwei `.onnx`-Modelle aus. Ein Duell besteht aus genau zehn Runden.
-In Runde 1 startet Spieler 1 links (grün) und Spieler 2 rechts (blau); danach
-werden die Seiten in jeder Runde getauscht. Der Endstand nach zehn Runden
-entscheidet das Duell.
+Eine Policy steuert einen Pong-Schläger ausschließlich aus dem aktuellen
+Bild. Sie soll den Ball am eigenen Schläger abfangen und am gegnerischen
+vorbeispielen. Erreicht der Ball eine Seite, erhält der erfolgreiche Spieler
+einen Punkt; die Runde endet sofort und das nächste Spiel beginnt.
 
-## Eure Aufgabe
+Ein Duell besteht aus **zehn Runden**. In ungeraden Runden ist Spieler 1
+links/orange und Spieler 2 rechts/grün; in geraden Runden werden die Seiten
+getauscht. Damit spielt jedes Team fünfmal auf jeder Seite.
 
-Entwickelt eine **Policy**, die aus einem einzelnen aktuellen Bildschirmbild
-eine Lenkaktion für den eigenen Spieler auswählt. Ziel ist es, länger als der
-Gegner zu überleben: Wer mit seinem Kopf den Spielfeldrand oder eine bereits
-gezeichnete Spur berührt, verliert die Runde; der andere Spieler erhält einen
-Punkt. Jedes Duell besteht aus **zehn Runden**. Spieler 1 und Spieler 2
-wechseln nach jeder Runde die Seiten, damit beide fünfmal links/grün und
-fünfmal rechts/blau spielen. Wer nach zehn Runden mehr Punkte hat, gewinnt;
-bei gleichem Punktestand endet das Duell unentschieden.
+Ein Ballwechsel darf höchstens **2.000 Schritte** dauern. Falls bis dahin kein
+Punkt erzielt wurde, endet die Runde unentschieden und beide Spieler erhalten
+einen Punkt. Auch eine technisch beendete Runde ohne Punkt wird als
+Unentschieden behandelt. Eine Partie kann im Browser pausiert, fortgesetzt
+oder gestoppt werden.
 
-Wenn beide Figuren in derselben Runde gleichzeitig kollidieren, ist die Runde
-unentschieden und **beide Spieler erhalten einen Punkt**. Eine laufende Partie
-kann im Browser pausiert, fortgesetzt oder gestoppt werden.
+## Beobachtungen
 
-Ihr gebt ausschließlich eine ONNX-Datei (`.onnx`) ab. Innerhalb
-des Modells dürft ihr Architektur, trainierte Gewichte und Bildverarbeitung
-frei wählen. Der Runner übergibt pro Spielschritt die Eingaben, ruft eure
-Methode `forward(image, player_id)` auf und führt die zurückgegebene Aktion
-aus. Es gibt keinen Zugriff auf das Environment, den Punktestand, die Aktionen
-des Gegners oder vorherige Frames.
-
-Die erste Runde startet mit Seed `42`; nach einem Punkt startet die nächste
-Runde mit einem weiteren festen Seed. Ein Duell wird außerdem nach höchstens
-50.000 Schritten beendet. Ein nicht ladbares oder unzulässiges Modell bricht
-die Partie ab.
-
-## Zustände / Beobachtungen
-
-Bei jedem Zeitschritt erhält eure Policy genau den aktuellen Atari-Frame und
-ihre eigene Spielerrolle:
+Bei jedem Schritt erhält das Modell genau einen aktuellen Atari-Frame und die
+eigene Rolle. Es gibt **keine** Spielhistorie und keinen Zugriff auf das
+Environment, den Punktestand oder die gegnerischen Aktionen.
 
 | Eingabe | Typ und Form | Bedeutung |
 | --- | --- | --- |
-| `image` | `torch.float32`, exakt `[1, 3, 210, 160]` | Aktuelles RGB-Bild im NCHW-Format. Die Pixelwerte sind bereits auf `[0, 1]` normiert. |
-| `player_id` | `torch.int64`, exakt `[1]` | `1` für den linken/grünen Spieler, `2` für den rechten/blauen Spieler. |
+| `image` | `float32`, `[1, 3, 210, 160]` | RGB-Bild im NCHW-Format, Pixelwerte bereits auf `[0, 1]` normiert. |
+| `player_id` | `int64`, `[1]` | `1`: linker/oranger Schläger, `2`: rechter/grüner Schläger. |
 
-Wichtig: Die Dimensionen des Originalbilds sind `210 × 160 × 3` in der
-Reihenfolge Höhe × Breite × RGB. Der Runner wandelt es für das Modell nach
-`[Batch, Kanal, Höhe, Breite]` um. Es gibt nur einen einzelnen Frame: Wenn ihr
-Bewegungsrichtung oder Geschwindigkeit schätzen möchtet, müsst ihr das über
-Bildmerkmale lösen; eine explizite Historie wird nicht übergeben.
-
-Im Bild sind beide Spielfiguren und ihre bereits gezogenen Spuren sichtbar.
-Eine Kollision mit einer Spur oder dem Rand führt zum Punkt für den Gegner.
-Die `1` in der ersten Dimension von `image` ist die Batch-Größe: Der Runner
-fragt immer genau eine Beobachtung gleichzeitig ab.
+Das Originalbild hat die Form `210 × 160 × 3` in H×B×RGB. Der Runner
+wandelt es in NCHW um und fragt immer genau einen Frame ab. Der Ball und beide
+Schläger sind sichtbar. Für eine stärkere Strategie müsste man aus dem Ball
+und seinen Bildmerkmalen abschätzen, wohin er fliegt; die feste öffentliche
+Modell-Schnittstelle enthält jedoch absichtlich nur einen Frame.
 
 ## Aktionen
 
-Euer Modell muss pro Schritt genau **eine** ganzzahlige Atari-Aktion ausgeben:
+Das Modell gibt genau eine Atari-Aktion als `int64`-Tensor mit einem Element
+aus. In der dargestellten Pong-Arena bewegen die Aktionen 2 und 3 den
+Schläger zur oberen bzw. unteren Bildschirmkante:
 
 | Wert | Aktion | Bedeutung |
 | ---: | --- | --- |
-| `0` | `NOOP` | Keine Eingabe / aktuelle Bewegung fortsetzen |
-| `1` | `UP` | Nach oben lenken |
-| `2` | `RIGHT` | Nach rechts lenken |
-| `3` | `LEFT` | Nach links lenken |
-| `4` | `DOWN` | Nach unten lenken |
+| `0` | `NOOP` | Keine neue Eingabe. |
+| `1` | `FIRE` | Aufschlag auslösen. |
+| `2` | `UP` | Schläger nach oben bewegen. |
+| `3` | `DOWN` | Schläger nach unten bewegen. |
+| `4` | `FIRE_UP` | Aufschlag und nach oben bewegen. |
+| `5` | `FIRE_DOWN` | Aufschlag und nach unten bewegen. |
 
-Die Ausgabe muss ein `int64`-Tensor mit **genau einem Element** sein, etwa
-`tensor([2], dtype=torch.int64)`. Auch `tensor(2, dtype=torch.int64)` ist
-zulässig, weil dieser Tensor ebenfalls nur ein Element enthält. Andere
-Datentypen, mehrere Werte und Nummern außerhalb von `0` bis `4` werden vom
-Runner abgewiesen.
+Der Aufschlag-Timer von Pong verhindert zusätzlich, dass ein Spieler durch
+Nichtstun dauerhaft blockiert. Ausgaben außerhalb von `0` bis `5`, falsche
+Datentypen oder mehrere Werte werden abgewiesen.
 
 ## Abgabeformat
 
-Reicht genau **eine** Datei mit der Endung `.onnx` ein; sie darf maximal
-250 MB groß sein. Das Modell muss ONNX-Opset **17** verwenden und genau die
-Eingaben `image`, `player_id` sowie die Ausgabe `action` enthalten. Der Runner
-lädt das Modell ausschließlich mit ONNX Runtime auf CPU; Python- oder
-PyTorch-Archive wie `.pt`, `.pt2` oder Pickle-Dateien werden nicht akzeptiert.
+Reicht genau **eine** `.onnx`-Datei ein, höchstens 250 MB groß. Sie muss mit
+ONNX-Opset 17 exportiert sein und exakt diese Schnittstelle haben:
 
-### Plattformübergreifende Abgabe
+```text
+image:      float32 [1, 3, 210, 160]
+player_id:  int64 [1]
+action:     int64 [1], Wert aus {0, 1, 2, 3, 4, 5}
+```
 
-Trainiert werden darf auf Mac, Windows, Linux oder Google Colab. Für die
-Bewertung zählt aber ausschließlich, ob die ONNX-Datei im Referenz-Runner der
-Lehrveranstaltung auf dem **Mac des Veranstalters** und dort auf der **CPU**
-läuft. Eine NVIDIA-GPU, Apple Silicon oder eine GPU überhaupt ist für das
-Turnier nicht erforderlich.
-
-Exportiert ein PyTorch-Modell so:
+Die Bewertung verwendet ausschließlich ONNX Runtime auf CPU. Trainieren darf
+man auf Mac, Windows, Linux oder Google Colab; die Abgabedatei darf aber keine
+GPU voraussetzen.
 
 ```python
 torch.onnx.export(
@@ -118,56 +95,13 @@ torch.onnx.export(
 )
 ```
 
-Die Double-DQN-Vorlage und das Colab-Notebook erzeugen dieses Format automatisch.
-Die Policy darf in `forward` weder `"mps"` noch `"cuda"` fest eintragen und
-keine GPU voraussetzen. Neue Tensoren müssen auf dem Gerät der Eingabe erzeugt
-werden, zum Beispiel mit `device=image.device`.
-
-**Verbindlicher Vorabtest:** Vor der Abgabe ausführen:
+Vor der Abgabe immer testen:
 
 ```bash
 python validate_submission.py model.onnx
 ```
 
-Der Validator verwendet dieselbe CPU-ONNX-Laufzeit und prüft Dateiformat,
-Eingaben, Ausgabe und Aktionsbereich. Nur ein Modell mit `OK` ist abgabefähig.
-
-## Festgelegte Modell-Schnittstelle
-
-Die Gruppe exportiert eine Policy als ONNX-Datei:
-
-```python
-torch.onnx.export(
-    policy.eval(), (image, player_id), "model.onnx",
-    input_names=["image", "player_id"], output_names=["action"],
-    opset_version=17,
-)
-```
-
-Der Runner übergibt:
-
-```text
-image:      float32 Tensor [1, 3, 210, 160], Wertebereich [0, 1]
-player_id:  int64 Tensor [1], Wert 1 (linker/grüner Spieler) oder 2 (rechter/blauer Spieler)
-```
-
-Das Modell gibt genau einen Skalar zurück:
-
-```text
-action: int64 Tensor mit einem Wert aus {0, 1, 2, 3, 4}
-```
-
-Die Aktionen sind:
-
-```text
-0: NOOP
-1: UP
-2: RIGHT
-3: LEFT
-4: DOWN
-```
-
-Die Vorverarbeitung ist im Runner standardisiert. Das Modell erhält keinen direkten Environment-Zugriff und keine Spielhistorie.
+Nur eine Ausgabe mit `OK` ist turnierkompatibel.
 
 ## Baselines
 
@@ -175,164 +109,86 @@ Die Vorverarbeitung ist im Runner standardisiert. Das Modell erhält keinen dire
 python create_baselines.py
 ```
 
-Erzeugt:
+Dies erzeugt:
 
 ```text
-baselines/baseline_straight.onnx
-baselines/baseline_wall_avoid.onnx
-baselines/baseline_wall_counter.onnx
+baselines/baseline_pong_static.onnx
+baselines/baseline_pong_track_ball.onnx
 ```
 
-`baseline_wall_counter.onnx` ist eine kurze bildbasierte Gegenstrategie für
-`baseline_wall_avoid.onnx`. Sie lokalisiert die eigene grüne bzw. blaue Spur
-im Bild und wählt abhängig von deren Position unterschiedliche Richtungen.
-Sie ist kein gelerntes Modell, sondern ein kompaktes Beispiel dafür, wie ein
-ONNX-Modell auf den Bildinhalt reagieren kann. Im lokalen Referenztest gewinnt
-sie gegen `baseline_wall_avoid` auf beiden Seiten.
+`baseline_pong_static.onnx` drückt nur `FIRE` und ist ein absichtlich schwacher
+Upload-Test. `baseline_pong_track_ball.onnx` erkennt Ball und eigenen Schläger
+über deren Farben und bewegt den Schläger zur Höhe des Balls. Es ist eine
+deterministische, bildbasierte Beispielpolicy und kein trainiertes Modell.
 
-### Double-DQN-Baseline gegen Wall Avoid trainieren
+## Minimalbeispiel: Double DQN gegen die Ball-Tracking-Baseline
 
-`train_ppo_sb3.py` verwendet die etablierte Bibliothek
-[Stable-Baselines3](https://stable-baselines3.readthedocs.io/) und trainiert
-eine CNN-Policy mit Double DQN. Dies ist absichtlich ein Minimalbeispiel: Die Policy
-trainiert nur als Spieler 1 auf der linken/grünen Seite gegen die feste,
-bildbasierte `baseline_wall_avoid` (Spieler 2, rechts/blau). Das CNN ist bewusst klein (etwa 50.000 Gewichte), damit Training
-und Experimentieren auf einem Laptop zügig bleiben. Nach dem Training wird
-automatisch eine turnierkompatible Datei exportiert.
+`train_ppo_sb3.py` ist die kompakte Startvorlage mit
+[Stable-Baselines3](https://stable-baselines3.readthedocs.io/). Sie trainiert
+nur Spieler 1 (links/orange) gegen die feste
+`baseline_pong_track_ball.onnx`. Ein kleiner CNN-Encoder erhält den
+Spielfeld-Ausschnitt, verkleinert auf `64 × 64`; beim Export ist dieselbe
+Vorverarbeitung im ONNX-Modell enthalten. Die öffentliche Schnittstelle bleibt
+also unverändert.
 
-Eine Trainingsrunde ist technisch auf 1.000 Schritte begrenzt; ein Timeout
-hat in der Turnierwertung den neutralen Wert `0`. Alle 5.000 Schritte druckt das Skript außerdem eine
-**deterministische** Evaluation gegen `baseline_wall_avoid`, einschließlich der
-verwendeten Aktionen. Das entspricht der `argmax`-Policy, die als ONNX-Datei
-exportiert wird; der während Double DQN angezeigte Trainings-Reward allein genügt nicht
-als Qualitätsmaß.
-
-Für das Double-DQN-Training wird ein dichter Lernreward verwendet: `+1` pro
-überlebtem Schritt und `-100` beim eigenen Crash. Das erleichtert die
-Kreditzuweisung bei Bilddaten, ist aber **nicht** die Turnierwertung. Die
-deterministische Evaluation und das Turnier bleiben bei den echten
-Punktresultaten (`+1` Sieg, `-1` Niederlage, Punkt für beide beim
-Unentschieden). Dadurch darf ein positiver Trainings-Reward nicht ohne die
-Gewinnrate interpretiert werden.
-
-Für Double DQN wird zuerst der statische Atari-Rand entfernt und das verbleibende
-Spielfeld von `160 × 160` auf `64 × 64` verkleinert, damit der Replay Buffer in
-Colab-Speicher passt. Beim Export werden dieselben Schritte
-als ONNX-Operation in das Modell eingebaut; die Turnier-Schnittstelle bleibt
-unverändert bei RGB-Bildern der Form `[1, 3, 210, 160]`.
+Pong liefert beim Punkt bereits den echten Lernreward `+1` (gewonnen) bzw.
+`-1` (verloren); ein Trainings-Timeout liefert `0`. Die Evaluation zählt die
+deterministische ONNX-Policy gegen denselben Gegner. Diese Gewinn-/Verlustzahl
+ist wichtiger als ein einzelner Loss-Wert.
 
 ```bash
-python train_ppo_sb3.py --timesteps 500000 --output baselines/baseline_ddqn.onnx
+python train_ppo_sb3.py --timesteps 500000 \
+  --output baselines/baseline_pong_ddqn.onnx
 ```
 
-### Training in Google Colab
+Das Skript exportiert standardmäßig nach jeweils 1.000 Schritten einen
+Checkpoint. Ein Testlauf prüft nur die Technik, nicht die Spielstärke:
 
-Das Notebook
-[train_ppo_colab.ipynb](train_ppo_colab.ipynb) kann direkt in Colab geöffnet
-werden: [In Google Colab starten](https://colab.research.google.com/github/georgmerz/rl-challenge/blob/main/train_ppo_colab.ipynb).
-Vor dem Ausführen in Colab unter **Runtime → Change runtime type** möglichst
-**T4 GPU** auswählen. Mit **Run all** werden Repository und Abhängigkeiten
-installiert und das Training gestartet. Der jeweils aktuelle Export liegt in
-`baselines/baseline_ddqn.onnx` und wird im letzten Notebook-Schritt
-heruntergeladen.
+```bash
+python train_ppo_sb3.py --timesteps 128 --output baselines/test_pong_dqn.onnx
+```
 
-Die Double-DQN-Baseline verwendet beim Export ONNX-Opset 17. Dadurch wird die Datei
-unabhängig von der PyTorch-Version des Trainingssystems auf dem Referenz-Mac
-mit ONNX Runtime ausgeführt.
+Für ein echtes Turniermodell sollte die Vorlage erweitert werden, damit auch
+die rechte/grüne Rolle lernt oder Selbstspiel verwendet wird. `train_ppo.py`
+enthält zusätzlich eine einfache PPO-Selbstspiel-Variante für Pong.
 
-Auf einem Mac mit Apple Silicon verwendet das Skript automatisch den MPS-
-Beschleuniger des M-Chips; in Colab wird bei aktivierter GPU automatisch CUDA
-verwendet. Falls nötig, lässt sich die CPU erzwingen:
+## Training in Google Colab
+
+Das Notebook [train_ppo_colab.ipynb](train_ppo_colab.ipynb) kann direkt in
+Colab geöffnet werden: [In Google Colab starten](https://colab.research.google.com/github/georgmerz/rl-challenge/blob/main/train_ppo_colab.ipynb).
+Unter **Runtime → Change runtime type** möglichst eine T4-GPU auswählen und
+anschließend **Run all** ausführen. Das Notebook installiert die ROMs,
+trainiert und lädt die ONNX-Datei herunter.
+
+Auf Apple Silicon verwendet das Skript automatisch MPS, in Colab CUDA und
+sonst CPU. CPU kann bei Bedarf erzwungen werden:
 
 ```bash
 python train_ppo_sb3.py --device cpu --timesteps 500000
 ```
 
-Das Skript überschreibt `baselines/baseline_ddqn.onnx` automatisch nach jeweils
-1.000 Trainingsschritten. Dadurch kann das bis dahin trainierte Modell bereits
-während des laufenden Trainings im Turnier-Runner getestet werden. Der Abstand
-kann bei Bedarf geändert werden:
-
-```bash
-python train_ppo_sb3.py --export-every 500 --output baselines/baseline_ddqn.onnx
-```
-
-Für einen kurzen technischen Test verwendet das Skript mindestens einen
-Rollout mit 128 Schritten; die so erzeugte Policy ist noch nicht sinnvoll
-trainiert:
-
-```bash
-python train_ppo_sb3.py --timesteps 128 --output baselines/test_dqn.onnx
-```
-
-Für ein echtes Turniermodell muss diese Vorlage erweitert werden, weil im
-Turnier nach jeder Runde die Seiten getauscht werden. Sinnvolle nächste Schritte
-sind daher: auch Spieler 2 trainieren, einen stärkeren Gegner verwenden oder
-Selbstspiel einsetzen. `train_ppo.py` bleibt als reine PyTorch-Selbstspiel-
-Variante zum Nachlesen verfügbar.
-
-## Beispiel für eine exportierbare Policy
+## Kleinstes exportierbares Modell
 
 ```python
-class Policy(torch.nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.net = torch.nn.Sequential(
-            torch.nn.Conv2d(3, 16, 8, stride=4),
-            torch.nn.ReLU(),
-            torch.nn.Conv2d(16, 32, 4, stride=2),
-            torch.nn.ReLU(),
-            torch.nn.Flatten(),
-            torch.nn.Linear(32 * 24 * 18, 5),
-        )
-
-    def forward(self, image, player_id):
-        logits = self.net(image)
-        return torch.argmax(logits, dim=1).to(torch.int64)
-```
-
-`player_id` darf für die Entscheidung ignoriert werden, muss aber im ONNX-Graph
-erhalten bleiben. Falls er sonst nicht benötigt wird, addiert `player_id * 0`
-zur Ausgabe.
-
-## Minimalbeispiel: feste Startstrategie
-
-Dieses Modell ist bewusst sehr einfach: Der grüne Spieler fährt nach rechts,
-der blaue nach links. Es ist ein guter Test, ob Export und Upload funktionieren,
-aber keine konkurrenzfähige Policy.
-
-```python
-from pathlib import Path
 import torch
 
 
-class StraightPolicy(torch.nn.Module):
+class Policy(torch.nn.Module):
     def forward(self, image: torch.Tensor, player_id: torch.Tensor) -> torch.Tensor:
-        # Spieler 1 (grün, links) fährt nach rechts, Spieler 2 nach links.
-        action_p1 = torch.full((image.shape[0],), 2, dtype=torch.int64, device=image.device)
-        action_p2 = torch.full((image.shape[0],), 3, dtype=torch.int64, device=image.device)
-        return torch.where(player_id == 1, action_p1, action_p2) + image[:, 0, 0, 0].to(torch.int64) * 0
+        # Schwacher, aber gültiger Aufschlag-Test.
+        action = torch.ones((image.shape[0],), dtype=torch.int64, device=image.device)
+        return action + player_id * 0 + image[:, 0, 0, 0].to(torch.int64) * 0
 
 
-policy = StraightPolicy().eval()
-example_image = torch.zeros((1, 3, 210, 160), dtype=torch.float32)
-example_player_id = torch.ones((1,), dtype=torch.int64)
+policy = Policy().eval()
+image = torch.zeros((1, 3, 210, 160), dtype=torch.float32)
+player_id = torch.ones((1,), dtype=torch.int64)
 torch.onnx.export(
-    policy, (example_image, example_player_id), "my_policy.onnx",
+    policy, (image, player_id), "my_policy.onnx",
     input_names=["image", "player_id"], output_names=["action"],
     opset_version=17,
 )
 ```
 
-Prüft anschließend `my_policy.onnx` mit `python validate_submission.py my_policy.onnx`
-und ladet es danach im Browser hoch.
-Für ein bildbasiertes Beispiel mit einer einfachen Wandvermeidung könnt ihr
-auch `create_baselines.py` lesen oder ausführen.
-
-## Nächste Schritte
-
-- mehrere Spiele pro Duell und Seitenwechsel ergänzen
-- Turnierbaum für vier bis acht Gruppen ergänzen
-- eingefrorene Seeds und einheitliche Zeitlimits definieren
-- Turnierergebnisse als JSON/CSV speichern
-- Uploads vor dem Turnier prüfen und danach automatisch löschen
+Danach mit `python validate_submission.py my_policy.onnx` prüfen und im
+Browser hochladen.

@@ -1,12 +1,12 @@
-"""Train a small PPO self-play baseline for the Atari Surround challenge.
+"""Train a small PPO self-play baseline for the Atari Pong challenge.
 
 The resulting ``.onnx`` file implements the public challenge interface:
     image:     float32 [1, 3, 210, 160] in [0, 1]
     player_id: int64 [1]
-    action:    int64 tensor containing one action in {0, ..., 4}
+    action:    int64 tensor containing one action in {0, ..., 5}
 
 Example:
-    python train_ppo.py --timesteps 100000 --output baselines/baseline_ppo.onnx
+    python train_ppo.py --timesteps 100000 --output baselines/baseline_pong_ppo.onnx
 
 This is deliberately a compact educational baseline, not a tuned training
 pipeline. It uses one shared policy for both players and trains it in self-play.
@@ -26,7 +26,7 @@ from torch import nn
 from torch.distributions import Categorical
 
 
-ACTION_COUNT = 5
+ACTION_COUNT = 6
 OBSERVATION_SHAPE = (3, 210, 160)
 
 
@@ -93,7 +93,7 @@ def export_policy(model: ActorCritic, output: Path) -> None:
 
 
 def train(args: argparse.Namespace) -> Path:
-    from pettingzoo.atari import surround_v2
+    from pettingzoo.atari import pong_v3
 
     if args.timesteps <= 0 or args.rollout_steps <= 0:
         raise ValueError("--timesteps und --rollout-steps müssen positiv sein.")
@@ -105,11 +105,11 @@ def train(args: argparse.Namespace) -> Path:
     model = ActorCritic().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate, eps=1e-5)
 
-    env = surround_v2.parallel_env(render_mode=None)
+    env = pong_v3.parallel_env(render_mode=None, num_players=2)
     observations, _ = env.reset(seed=args.seed)
     agent_names = list(env.possible_agents)
     if len(agent_names) != 2:
-        raise RuntimeError(f"Surround erwartet zwei Agents, erhalten: {agent_names}")
+        raise RuntimeError(f"Pong erwartet zwei Agents, erhalten: {agent_names}")
 
     env_steps = 0
     episode = 1
@@ -215,9 +215,9 @@ def train(args: argparse.Namespace) -> Path:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train a PPO self-play policy for Atari Surround.")
+    parser = argparse.ArgumentParser(description="Train a PPO self-play policy for Atari Pong.")
     parser.add_argument("--timesteps", type=int, default=100_000, help="Anzahl der Environment-Schritte (Standard: 100000).")
-    parser.add_argument("--output", default="baselines/baseline_ppo.onnx", help="Zielpfad für das exportierte ONNX-Modell.")
+    parser.add_argument("--output", default="baselines/baseline_pong_ppo.onnx", help="Zielpfad für das exportierte ONNX-Modell.")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="cpu", help="z. B. cpu, mps oder cuda")
     parser.add_argument("--rollout-steps", type=int, default=128)

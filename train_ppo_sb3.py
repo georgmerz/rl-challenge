@@ -1,11 +1,11 @@
-"""Minimal Double-DQN example for player 1 (green/left) in Atari Surround.
+"""Minimal Double-DQN example for player 1 (orange/left) in Atari Pong.
 
-The agent always plays player 1 against the fixed ``baseline_wall_avoid``
+The agent always plays player 1 against the fixed ``baseline_pong_track_ball``
 opponent. The trained policy
 is exported to the challenge's portable ONNX ``.onnx`` format.
 
 Example:
-    python train_ppo_sb3.py --timesteps 500000 --output baselines/baseline_ddqn.onnx
+    python train_ppo_sb3.py --timesteps 500000 --output baselines/baseline_pong_ddqn.onnx
 """
 
 from __future__ import annotations
@@ -26,30 +26,25 @@ from torch.nn import functional as F
 
 
 MAX_EPISODE_STEPS = 1_000
-# Dense reward used only while training: remaining alive provides a small,
-# immediate signal; crashing is expensive. The tournament itself still uses
-# only its original +/- 1 point scoring.
-SURVIVAL_REWARD = 1.0
-DEATH_PENALTY = -100.0
 
 
-class Player1VsWallAvoidEnv(gym.Env):
-    """Player 1 (left/green) versus the exact ONNX wall-avoid baseline."""
+class Player1VsPongBaselineEnv(gym.Env):
+    """Player 1 (left/orange) versus the exact ONNX Pong baseline."""
 
     metadata = {"render_modes": []}
 
     def __init__(self) -> None:
-        from pettingzoo.atari import surround_v2
+        from pettingzoo.atari import pong_v3
 
-        self.env = surround_v2.parallel_env(render_mode=None)
+        self.env = pong_v3.parallel_env(render_mode=None, num_players=2)
         import onnxruntime as ort
 
-        opponent_path = Path(__file__).resolve().parent / "baselines" / "baseline_wall_avoid.onnx"
+        opponent_path = Path(__file__).resolve().parent / "baselines" / "baseline_pong_track_ball.onnx"
         if not opponent_path.is_file():
             raise FileNotFoundError(f"Gegnerdatei fehlt: {opponent_path}")
         self.opponent = ort.InferenceSession(str(opponent_path), providers=["CPUExecutionProvider"])
         self.observation_space = spaces.Box(0, 255, shape=(210, 160, 3), dtype=np.uint8)
-        self.action_space = spaces.Discrete(5)
+        self.action_space = spaces.Discrete(6)
         self.player_1: str | None = None
         self.player_2: str | None = None
         self.observations: dict[str, np.ndarray] | None = None
@@ -58,7 +53,7 @@ class Player1VsWallAvoidEnv(gym.Env):
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         observations, _ = self.env.reset(seed=seed)
-        # surround_v2: first_0 = right/blue, second_0 = left/green.
+        # pong_v3: first_0 = right/green, second_0 = left/orange.
         self.player_2, self.player_1 = self.env.possible_agents
         self.observations = observations
         self.episode_steps = 0
@@ -86,29 +81,22 @@ class Player1VsWallAvoidEnv(gym.Env):
         self.observations = observations
         self.episode_steps += 1
         # The tournament starts a fresh round as soon as somebody scores.
-        # The technical cap keeps DQN episodes bounded. It does not change the
-        # tournament reward: a timeout has reward 0.
+        # The technical cap keeps DQN episodes bounded; a timeout is neutral.
         point_scored = any(reward != 0 for reward in rewards.values())
         natural_end = bool(terminations.get(self.player_1, False)) or bool(truncations.get(self.player_1, False))
         timed_out = not (point_scored or natural_end) and self.episode_steps >= MAX_EPISODE_STEPS
         terminated = point_scored or natural_end
         truncated = timed_out
         tournament_reward = float(rewards.get(self.player_1, 0.0))
-        # The tournament gives both competitors one point after a simultaneous
-        # crash. Mirror that reward in training rather than treating it as 0.
         round_draw = natural_end and not point_scored
-        if round_draw:
-            tournament_reward = 1.0
         if terminated or truncated:
             observation = np.zeros(self.observation_space.shape, dtype=np.uint8)
         else:
             observation = observations[self.player_1]
         info = {"tournament_reward": tournament_reward, "timeout": timed_out, "draw": round_draw}
-        # A simultaneous crash is a draw in the tournament, but this player
-        # did physically crash, so it receives the training death penalty.
-        player_died = float(rewards.get(self.player_1, 0.0)) < 0 or round_draw
-        training_reward = DEATH_PENALTY if player_died else SURVIVAL_REWARD
-        return observation, training_reward, terminated, truncated, info
+        # Pong already supplies a direct +1/-1 reward whenever a point is
+        # scored, so this minimal example needs no artificial survival reward.
+        return observation, tournament_reward, terminated, truncated, info
 
     def close(self) -> None:
         self.env.close()
@@ -214,7 +202,7 @@ class ExportCallback(BaseCallback):
 def evaluate_deterministic(model: DQN, episodes: int) -> None:
     """Report the same argmax policy that is exported to ONNX."""
     outcomes = {"win": 0, "loss": 0, "draw": 0, "timeout": 0}
-    actions = np.zeros(5, dtype=np.int64)
+    actions = np.zeros(6, dtype=np.int64)
     for seed in range(episodes):
         env = make_dqn_env()
         try:
@@ -239,7 +227,7 @@ def evaluate_deterministic(model: DQN, episodes: int) -> None:
         finally:
             env.close()
     print(
-        "Deterministische ONNX-Policy gegen baseline_wall_avoid: "
+        "Deterministische ONNX-Policy gegen baseline_pong_track_ball: "
         f"Siege {outcomes['win']}, Niederlagen {outcomes['loss']}, "
         f"Unentschieden {outcomes['draw']}, Timeouts {outcomes['timeout']}; "
         f"Aktionen {actions.tolist()}"
@@ -248,7 +236,7 @@ def evaluate_deterministic(model: DQN, episodes: int) -> None:
 
 def make_dqn_env() -> gym.Env:
     """Crop and resize images so DQN's replay buffer fits in Colab RAM."""
-    env = PlayingFieldObservation(Player1VsWallAvoidEnv())
+    env = PlayingFieldObservation(Player1VsPongBaselineEnv())
     return gym.wrappers.ResizeObservation(env, (64, 64))
 
 
@@ -282,9 +270,9 @@ class DoubleDQN(DQN):
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train a Stable-Baselines3 Double-DQN baseline for Atari Surround.")
+    parser = argparse.ArgumentParser(description="Train a Stable-Baselines3 Double-DQN baseline for Atari Pong.")
     parser.add_argument("--timesteps", type=int, default=500_000, help="Training steps (default: 500000).")
-    parser.add_argument("--output", default="baselines/baseline_ddqn.onnx", help="Output path for the exported ONNX challenge model.")
+    parser.add_argument("--output", default="baselines/baseline_pong_ddqn.onnx", help="Output path for the exported ONNX challenge model.")
     parser.add_argument("--export-every", type=int, default=1_000, help="Checkpoint-Export nach N Schritten (Standard: 1000).")
     parser.add_argument("--eval-every", type=int, default=5_000, help="Deterministische Evaluation nach N Schritten (Standard: 5000).")
     parser.add_argument("--eval-episodes", type=int, default=5, help="Runden pro deterministischer Evaluation (Standard: 5).")

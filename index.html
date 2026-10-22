@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>RL Challenge · Atari Surround</title>
+  <title>RL Challenge · Atari Pong</title>
   <style>
     :root { --red:#d3073f; --ink:#171717; --muted:#666; --paper:#fff; --panel:#f3f3f3; }
     * { box-sizing:border-box; } body { margin:0; font-family:Arial,sans-serif; color:var(--ink); background:var(--paper); }
@@ -18,7 +18,7 @@
   </style>
 </head>
 <body>
-  <header><h1>RL Challenge · Atari Surround</h1><p>Testlauf für zwei exportierte PyTorch-Modelle</p></header>
+  <header><h1>RL Challenge · Atari Pong</h1><p>Testlauf für zwei exportierte ONNX-Modelle</p></header>
   <main>
     <section class="controls">
       <h2>Modelle laden</h2>
@@ -31,7 +31,7 @@
       </form>
       <button id="pause" class="secondary" type="button" disabled>Pausieren</button>
       <button id="stop" class="secondary" type="button" disabled>Partie stoppen</button>
-      <div class="hint">10 Runden pro Duell; die linke/grüne und rechte/blaue Seite wechseln nach jeder Runde. Eingabe: aktuelles RGB-Bild plus Spielerrolle. Ausgabe: eine Surround-Aktion von 0 bis 4.</div>
+      <div class="hint">10 Runden pro Duell; die linke/orange und rechte/grüne Seite wechseln nach jeder Runde. Nach 2.000 Schritten ohne Punkt endet eine Runde unentschieden. Eingabe: aktuelles RGB-Bild plus Spielerrolle. Ausgabe: eine Pong-Aktion von 0 bis 5.</div>
       <div id="status" class="status"></div>
     </section>
     <section class="arena">
