@@ -121,13 +121,14 @@ Upload-Test. `baseline_pong_track_ball.onnx` erkennt Ball und eigenen Schläger
 über deren Farben und bewegt den Schläger zur Höhe des Balls. Es ist eine
 deterministische, bildbasierte Beispielpolicy und kein trainiertes Modell.
 
-## Minimalbeispiel: Double DQN gegen die Ball-Tracking-Baseline
+## Minimalbeispiel: Vanilla DQN gegen die Ball-Tracking-Baseline
 
-`train_ppo_sb3.py` ist die kompakte Startvorlage mit
-[Stable-Baselines3](https://stable-baselines3.readthedocs.io/). Sie trainiert
+`train_dqn_vanilla.py` ist die kompakte Startvorlage mit
+[Stable-Baselines3](https://stable-baselines3.readthedocs.io/). Sie verwendet
+ohne eigene Algorithmusänderungen Standard-`DQN` mit Standard-`CnnPolicy` und trainiert
 nur Spieler 1 (links/orange) gegen die feste
 `baseline_pong_track_ball.onnx`. Ein kleiner CNN-Encoder erhält den
-Spielfeld-Ausschnitt, verkleinert auf `64 × 64`; beim Export ist dieselbe
+Spielfeld-Ausschnitt, verkleinert auf `84 × 84`; beim Export ist dieselbe
 Vorverarbeitung im ONNX-Modell enthalten. Die öffentliche Schnittstelle bleibt
 also unverändert.
 
@@ -137,20 +138,21 @@ deterministische ONNX-Policy gegen denselben Gegner. Diese Gewinn-/Verlustzahl
 ist wichtiger als ein einzelner Loss-Wert.
 
 ```bash
-python train_ppo_sb3.py --timesteps 500000 \
-  --output baselines/baseline_pong_ddqn.onnx
+python train_dqn_vanilla.py --timesteps 500000 \
+  --output baselines/baseline_pong_dqn.onnx
 ```
 
 Das Skript exportiert standardmäßig nach jeweils 1.000 Schritten einen
 Checkpoint. Ein Testlauf prüft nur die Technik, nicht die Spielstärke:
 
 ```bash
-python train_ppo_sb3.py --timesteps 128 --output baselines/test_pong_dqn.onnx
+python train_dqn_vanilla.py --timesteps 128 --output baselines/test_pong_dqn.onnx
 ```
 
 Für ein echtes Turniermodell sollte die Vorlage erweitert werden, damit auch
-die rechte/grüne Rolle lernt oder Selbstspiel verwendet wird. `train_ppo.py`
-enthält zusätzlich eine einfache PPO-Selbstspiel-Variante für Pong.
+die rechte/grüne Rolle lernt oder Selbstspiel verwendet wird. Die frühere,
+etwas stärker angepasste Double-DQN-Variante bleibt in `train_ppo_sb3.py`;
+`train_ppo.py` enthält eine PPO-Selbstspiel-Variante für Pong.
 
 ## Training in Google Colab
 
@@ -164,7 +166,7 @@ Auf Apple Silicon verwendet das Skript automatisch MPS, in Colab CUDA und
 sonst CPU. CPU kann bei Bedarf erzwungen werden:
 
 ```bash
-python train_ppo_sb3.py --device cpu --timesteps 500000
+python train_dqn_vanilla.py --device cpu --timesteps 500000
 ```
 
 ## Kleinstes exportierbares Modell

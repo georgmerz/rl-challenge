@@ -148,11 +148,12 @@ class ChallengeDQNPolicy(nn.Module):
         self.q_net = copy.deepcopy(q_net).cpu()
 
     def forward(self, image: torch.Tensor, player_id: torch.Tensor) -> torch.Tensor:
-        # ``image`` is already normalized exactly as SB3's image
-        # preprocessing would normalize the uint8 training observations. The
-        # DQN trains on the cropped 64 x 64 playing field; this preprocessing becomes part of
-        # the portable ONNX model, while its public input remains 210 x 160.
-        image = image[:, :, 34:194, :]
+        # The public input is normalized, whereas SB3's CnnPolicy receives
+        # uint8 images and normalizes them internally. Convert back to that
+        # expected scale before passing data into the untouched Q-network.
+        # The DQN trains on the cropped 64 x 64 playing field; this
+        # preprocessing becomes part of the portable ONNX model.
+        image = image[:, :, 34:194, :] * 255.0
         image = F.interpolate(image, size=(64, 64), mode="bilinear", align_corners=False)
         q_values = self.q_net(image)
         # Keep player_id as a graph input for the fixed ONNX challenge API.
