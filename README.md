@@ -17,6 +17,10 @@ PORT=5001 python app.py
 
 Danach im Browser `http://127.0.0.1:5001` öffnen.
 
+Unter Windows in PowerShell lautet die Aktivierung der virtuellen Umgebung
+`.venv\\Scripts\\Activate.ps1`; falls Port 5000 belegt ist, startet ihr mit
+`$env:PORT=5001; python app.py`.
+
 Wählt dort zwei `.pt2`-Modelle aus. Ein Duell besteht aus genau zehn Runden.
 In Runde 1 startet Spieler 1 links (grün) und Spieler 2 rechts (blau); danach
 werden die Seiten in jeder Runde getauscht. Der Endstand nach zehn Runden
@@ -98,9 +102,38 @@ Runner bewusst nicht. Beim Laden setzt der Runner das Modell in den
 Auswertungsmodus (`eval()`), daher müssen alle zum Entscheiden nötigen
 Gewichte bereits in der exportierten Datei enthalten sein.
 
+### Plattformübergreifende Abgabe
+
+Trainiert werden darf auf Mac, Windows, Linux oder Google Colab. Für die
+Bewertung zählt aber ausschließlich, ob die exportierte Datei im lokalen
+Referenz-Runner auf der **CPU** läuft. Eine NVIDIA-GPU, Apple Silicon oder
+eine GPU überhaupt ist für das Turnier nicht erforderlich.
+
+Für selbst entwickelte Modelle empfehlen wir ausdrücklich **TorchScript**:
+
+```python
+traced = torch.jit.trace(policy.eval(), (image, player_id), check_trace=False)
+traced.save("model.pt2")
+```
+
+Die PPO-Vorlage und das Colab-Notebook erzeugen dieses Format bereits
+automatisch. `torch.export.save` bleibt zulässig, kann sich zwischen
+unterschiedlichen PyTorch-Versionen aber ändern. Wer dieses Format verwendet,
+muss die exportierte Datei vor der Abgabe im Referenz-Runner testen.
+
+Die Policy darf in `forward` weder `"mps"` noch `"cuda"` fest eintragen und
+keine GPU voraussetzen. Neue Tensoren müssen auf dem Gerät der Eingabe erzeugt
+werden, zum Beispiel mit `device=image.device`. So funktionieren Modelle beim
+Training mit GPU und bei der Turnierauswertung auf CPU gleichermaßen.
+
+**Verbindlicher Vorabtest:** Startet vor der Abgabe `python app.py`, ladet das
+eigene Modell zusammen mit `baselines/baseline_straight.pt2` hoch und startet
+eine Partie. Nur eine Datei, die diesen Test ohne Fehlermeldung durchläuft,
+gilt als abgabefähig.
+
 ## Festgelegte Modell-Schnittstelle
 
-Die Gruppe exportiert eine Policy als PyTorch-Exportdatei:
+Die Gruppe exportiert eine Policy beispielsweise als PyTorch-Exportdatei:
 
 ```python
 exported = torch.export.export(policy, (image, player_id))
