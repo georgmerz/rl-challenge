@@ -14,6 +14,32 @@ ONNX-Datei einzureichen.
 | Modell | Reine ONNX-Policy-Inferenz: Sie erhält nur `image` und `player_id` und gibt eine Aktion zurück. Sie hat keinen direkten Zugriff auf Environment, Punktestand oder gegnerische Aktion. |
 | Training | Eigene, von der Gruppe gewählte Offline-/Trainingsprogramme. Die Beispiele im Repository erzeugen ONNX-Dateien, sind aber nicht Teil des Turnier-Runners. |
 
+```mermaid
+flowchart LR
+    subgraph training[Training außerhalb des Turniers]
+        method[RL-Algorithmus und Training] --> export[ONNX-Export]
+    end
+
+    subgraph tournament[Lokaler Browser-Runner]
+        browser[Browser: zwei Modelle auswählen]
+        runner[app.py: Frame-Stack, Seitenwechsel, Punkte]
+        arena[PettingZoo Atari Pong]
+        model1["ONNX-Modell 1<br/>reine Policy"]
+        model2["ONNX-Modell 2<br/>reine Policy"]
+
+        browser --> runner
+        arena -->|RGB-Frames| runner
+        runner -->|image + player_id| model1
+        runner -->|image + player_id| model2
+        model1 -->|action 0–5| runner
+        model2 -->|action 0–5| runner
+        runner -->|Aktionen| arena
+        runner -->|Bild, Punktestand, Status| browser
+    end
+
+    export -. eine ONNX-Abgabe .-> browser
+```
+
 Der Runner führt beim lokalen Test **zwei** hochgeladene Modelle gegeneinander
 aus. Das bedeutet nicht, dass zwei Dateien abgegeben werden: Pro Gruppe ist
 genau eine Modell-Datei vorgesehen; die zweite Datei im Browser dient nur als
