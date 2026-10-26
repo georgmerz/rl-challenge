@@ -1,11 +1,8 @@
-"""Vanilla-DQN mit einfachem Self-Play fuer die Pong-Challenge.
-
-Der trainierte Agent spielt pro Episode abwechselnd links/orange und
-rechts/gruen gegen seine aktuelle (greedy ausgefuehrte) Policy. Dieses Skript
-ist als ein vollstaendiger, veränderbarer Einstieg gedacht.
+"""Vanilla-DQN für Atari Pong gegen ein wählbares ONNX-Gegnermodell.
 
 Beispiel:
-    python train_dqn_vanilla.py --timesteps 1000000
+    python create_baselines.py
+    python train_dqn_vanilla.py --opponent baselines/baseline_pong_track_ball.onnx
 """
 
 from __future__ import annotations
@@ -13,27 +10,29 @@ from __future__ import annotations
 import argparse
 import copy
 import inspect
-from collections import deque
 from pathlib import Path
 
-import gymnasium as gym
 import numpy as np
 import torch
 from gymnasium import spaces
-from pettingzoo.atari import pong_v3
 from stable_baselines3 import DQN
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor, NatureCNN
 from torch import nn
 from torch.nn import functional as F
 
-
-FRAME_STACK = 4
-MAX_EPISODE_STEPS = 1_000
+from pong_opponent_env import FRAME_STACK, PongVsOnnxEnv
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train vanilla DQN with self-play for Atari Pong.")
+    parser = argparse.ArgumentParser(description="Train vanilla DQN against an ONNX Pong opponent.")
+    parser.add_argument(
+        "--opponent",
+        type=Path,
+        default=Path("baselines/baseline_pong_track_ball.onnx"),
+        help="ONNX-Datei des Gegners (Standard: Ball-Tracking-Baseline).",
+    )
+    parser.add_argument("--player-id", choices=(1, 2), type=int, default=1, help="Trainierte Seite: 1 links, 2 rechts.")
     parser.add_argument("--timesteps", type=int, default=1_000_000, help="Anzahl Trainingsschritte.")
     parser.add_argument("--output", default="baselines/baseline_pong_dqn.onnx", help="Ziel für die ONNX-Datei.")
     parser.add_argument("--device", default="auto", help="auto, cuda, mps oder cpu.")
@@ -47,8 +46,8 @@ def main() -> None:
     if min(args.timesteps, args.export_every) <= 0:
         raise ValueError("--timesteps und --export-every müssen positiv sein.")
 
-    # 1. Pong als Einzelagenten-Umgebung erzeugen.
-    env = SelfPlayPong()
+    # 1. Pong-Umgebung gegen den gewählten ONNX-Gegner erzeugen.
+    env = PongVsOnnxEnv(args.opponent, player_id=args.player_id)
     try:
         # 2. Standard-DQN erstellen. Die festen Werte sind übliche Atari-Startwerte.
         model = DQN(
@@ -67,9 +66,8 @@ def main() -> None:
             seed=42,
             device=args.device,
         )
-        env.set_opponent(model)
 
-        # 3. Lernen. Der Gegner verwendet dabei dieselbe, laufend besser werdende Policy.
+        # 3. Lernen und regelmäßig portable ONNX-Checkpoints schreiben.
         output = Path(args.output)
         model.learn(
             total_timesteps=args.timesteps,
@@ -83,82 +81,6 @@ def main() -> None:
         print(f"Vanilla-DQN-Policy exportiert nach {output}")
     finally:
         env.close()
-
-
-def stack_frames(frames: np.ndarray) -> np.ndarray:
-    """Vier RGB-Frames in das öffentliche Format [12, 210, 160] umwandeln."""
-    image = np.asarray(frames).transpose(0, 3, 1, 2).reshape(12, 210, 160)
-    return np.ascontiguousarray(image, dtype=np.float32) / 255.0
-
-
-class SelfPlayPong(gym.Env):
-    """Macht aus dem Zwei-Spieler-Pong eine Gym-Umgebung für einen DQN-Agenten."""
-
-    metadata = {"render_modes": []}
-
-    def __init__(self) -> None:
-        self.game = pong_v3.parallel_env(render_mode=None, num_players=2)
-        self.observation_space = spaces.Box(0.0, 1.0, shape=(12, 210, 160), dtype=np.float32)
-        self.action_space = spaces.Discrete(6)
-        self.model: DQN | None = None
-        self.controlled_player: str | None = None
-        self.opponent_player: str | None = None
-        self.frames: dict[str, deque[np.ndarray]] | None = None
-        self.steps = 0
-
-    def set_opponent(self, model: DQN) -> None:
-        """Die aktuelle DQN-Policy liefert im Spiel die Gegneraktionen."""
-        self.model = model
-
-    def reset(self, *, seed=None, options=None):
-        super().reset(seed=seed)
-        observations, _ = self.game.reset(seed=seed)
-        right_player, left_player = self.game.possible_agents
-
-        # Beide Seiten kommen im Replay-Buffer vor; die Farbe ist im Bild sichtbar.
-        if self.np_random.integers(2):
-            self.controlled_player, self.opponent_player = left_player, right_player
-        else:
-            self.controlled_player, self.opponent_player = right_player, left_player
-        self.frames = {
-            player: deque([observations[player].copy()] * FRAME_STACK, maxlen=FRAME_STACK)
-            for player in self.game.possible_agents
-        }
-        self.steps = 0
-        return stack_frames(np.stack(self.frames[self.controlled_player])), {}
-
-    def step(self, action: int):
-        if self.model is None or self.frames is None:
-            raise RuntimeError("Vor dem Training muss set_opponent(model) aufgerufen werden.")
-        if self.controlled_player is None or self.opponent_player is None:
-            raise RuntimeError("reset() muss vor step() aufgerufen werden.")
-
-        opponent_image = stack_frames(np.stack(self.frames[self.opponent_player]))
-        # Der Gegner spielt die aktuelle Policy ohne zusätzliche Exploration.
-        opponent_action, _ = self.model.predict(opponent_image, deterministic=True)
-        observations, rewards, terminations, truncations, _ = self.game.step(
-            {
-                self.controlled_player: int(action),
-                self.opponent_player: int(opponent_action),
-            }
-        )
-        for player, image in observations.items():
-            self.frames[player].append(image)
-        self.steps += 1
-
-        point_scored = any(reward != 0 for reward in rewards.values())
-        naturally_finished = any(terminations.values()) or any(truncations.values())
-        truncated = not (point_scored or naturally_finished) and self.steps >= MAX_EPISODE_STEPS
-        terminated = point_scored or naturally_finished
-        reward = float(rewards.get(self.controlled_player, 0.0))
-        if terminated or truncated:
-            observation = np.zeros(self.observation_space.shape, dtype=np.float32)
-        else:
-            observation = stack_frames(np.stack(self.frames[self.controlled_player]))
-        return observation, reward, terminated, truncated, {}
-
-    def close(self) -> None:
-        self.game.close()
 
 
 class PongCNN(BaseFeaturesExtractor):
@@ -221,7 +143,6 @@ class CheckpointCallback(BaseCallback):
             export_onnx(self.model, checkpoint.with_suffix(".onnx"))
             print(f"Checkpoint nach {self.num_timesteps} Schritten: {checkpoint}.zip und .onnx")
             self.next_checkpoint += self.every_steps
-        return True
 
 
 if __name__ == "__main__":

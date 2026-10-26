@@ -184,11 +184,13 @@ zulässigen Algorithmus noch eine faire Evaluation im Turnier.
 
 ### DQN-Minimalbeispiel
 
-[`train_dqn_vanilla.py`](train_dqn_vanilla.py) ist ein vollständiges,
-kommentiertes Skript ohne weitere Trainingsmodule. Es erzeugt Pong, DQN und
-ONNX-Export in einer Datei. Der Agent spielt im **Self-Play** gegen seine
-aktuelle greedy ausgeführte Policy; die trainierte Seite wechselt pro Episode
-zwischen links/orange und rechts/grün. Es beschneidet das Spielfeld,
+[`train_dqn_vanilla.py`](train_dqn_vanilla.py) ist der kurze, kommentierte
+Einstieg. Es erzeugt DQN, startet das Lernen und exportiert ONNX. Der
+Zwei-Spieler-Adapter [`pong_opponent_env.py`](pong_opponent_env.py) baut Pong
+gegen ein **wählbares ONNX-Gegnermodell** auf und benutzt dafür dieselbe
+`ModelAgent`-Schnittstelle wie der Turnier-Runner. Das Beispiel trainiert
+standardmäßig links/orange (`player_id=1`) gegen die Ball-Tracking-Baseline.
+Es beschneidet das Spielfeld,
 verwendet Graustufen, `84 × 84` Pixel und vier Trainingsframes. Diese
 Vorverarbeitung liegt im PyTorch-Netz selbst: Der Environment-Adapter stapelt
 und normalisiert nur die vier Rohframes zum öffentlichen 12-Kanal-Format;
@@ -196,19 +198,23 @@ Beschneiden, Graustufen und Skalieren werden beim ONNX-Export unverändert Teil
 des Modells.
 
 ```bash
+python create_baselines.py
 python train_dqn_vanilla.py --timesteps 1000000 \
+  --opponent baselines/baseline_pong_track_ball.onnx \
   --output baselines/baseline_pong_dqn.onnx
 ```
 
-Das Beispiel ist eine Startvorlage, keine Referenz für eine faire
-Turnierevaluation: Sein Trainings-Timeout beträgt 1.000 Schritte statt 2.000;
-sein Gegner ändert sich zugleich mit der eigenen Policy. Das macht Self-Play
-einfach sichtbar, aber auch nichtstationär. Für eine belastbare Evaluation
-sind feste zusätzliche Gegner und getrennte Tests weiterhin sinnvoll. Für
-einen langen GPU-Lauf genügen dieselben Optionen, etwa:
+Mit `--opponent andere_policy.onnx` lässt sich jeder technisch kompatible
+ONNX-Gegner wählen; `--player-id 2` trainiert die rechte/grüne Seite. Das
+Beispiel ist eine Startvorlage, keine Referenz für eine faire
+Turnierevaluation: Sein Trainings-Timeout beträgt 1.000 Schritte statt 2.000
+und es sieht jeweils nur einen festen Gegner. Für eine belastbare Evaluation
+sind weitere Gegner, beide Seiten und getrennte Tests sinnvoll. Für einen
+langen GPU-Lauf genügen dieselben Optionen, etwa:
 
 ```bash
 python train_dqn_vanilla.py --device cuda --timesteps 5000000 \
+  --opponent baselines/baseline_pong_track_ball.onnx \
   --export-every 250000 \
   --output baselines/baseline_pong_dqn.onnx
 ```
