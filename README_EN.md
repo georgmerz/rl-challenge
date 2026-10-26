@@ -341,6 +341,7 @@ Pong against ONNX opponent → preprocessing → DQN training
 | --- | --- |
 | [`pong_opponent_env.py`](pong_opponent_env.py) | Converts the two-player game into a Gymnasium environment: one side learns while a selectable ONNX model controls the other side. |
 | [`train_dqn_vanilla.py`](train_dqn_vanilla.py) | Defines preprocessing, the CNN, DQN, checkpoints, and final ONNX export. |
+| [`train_qrdqn_vanilla.py`](train_qrdqn_vanilla.py) | Optional QR-DQN variant using the same environment, preprocessing, and ONNX output. |
 
 The 128-step run from Section 1 is only a technical smoke test. For a first
 run that performs DQN updates, use, for example, 100,000 steps:
@@ -368,6 +369,17 @@ The example works as follows:
 The `.onnx` files are for the browser and submission; the `.zip` files are for
 continuing or inspecting SB3 training. The 1,000-step timeout, DQN, and fixed
 opponent are choices made by this example, not tournament rules.
+
+As an optional alternative, QR-DQN can use the same experimental setup. It
+estimates multiple return quantiles for each action and exports the action with
+the highest mean value. It is a distributional DQN variant, not a complete
+Rainbow DQN implementation:
+
+```bash
+python train_qrdqn_vanilla.py --timesteps 100000 \
+  --output baselines/baseline_pong_qrdqn.onnx
+python validate_submission.py baselines/baseline_pong_qrdqn.onnx
+```
 
 ### From the example to your experiment
 
