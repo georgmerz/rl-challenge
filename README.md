@@ -258,9 +258,21 @@ Das Browser-Turnier deckt bereits zehn feste Runden und beide Seiten ab. Für
 eine belastbare Aussage über Spielstärke empfiehlt sich zusätzlich eine eigene
 Evaluation über mehr Seeds und unterschiedliche Gegner.
 
-## Kleinstes gültiges Exportbeispiel
+## ONNX-Export aus PyTorch
 
-Dieses Modell ist nur ein technischer Test und nicht spielstark:
+Für eine PyTorch-Policy sind beim Export vier Dinge wichtig:
+
+1. `forward` nimmt beide Eingaben in der Reihenfolge `image, player_id` an.
+2. Die Ausgabe ist ein `torch.int64`-Tensor der Form `[1]`, nicht etwa
+   Aktionswahrscheinlichkeiten oder Q-Werte.
+3. `eval()` schaltet das Modell in den Inferenzmodus. Die Beispieltensoren
+   haben exakt die öffentliche Form und Datentypen.
+4. `player_id` muss im Rechengraphen verwendet werden. Wird es ignoriert,
+   kann PyTorch die Eingabe beim Export entfernen und der Runner lehnt das
+   Modell ab.
+
+Dieses absichtlich schwache Modell ist ein vollständiger technischer
+Exporttest:
 
 ```python
 import torch
@@ -286,4 +298,6 @@ torch.onnx.export(
 ```
 
 Danach `python validate_submission.py my_policy.onnx` ausführen und die Datei
-im Browser gegen ein zweites Testmodell spielen lassen.
+im Browser gegen ein zweites Testmodell spielen lassen. In einem echten Modell
+ersetzt ihr die konstante Aktion durch eure Inferenzlogik; die Ein- und
+Ausgabesignatur bleibt unverändert.
