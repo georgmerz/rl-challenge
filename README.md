@@ -209,15 +209,131 @@ python train_dqn_vanilla.py --timesteps 1000000 \
   --output baselines/baseline_pong_dqn.onnx
 ```
 
-Mit `--opponent andere_policy.onnx` lässt sich jeder technisch kompatible
-ONNX-Gegner wählen; `--player-id 1` trainiert nur links/orange,
-`--player-id 2` nur rechts/grün und `--player-id 0` (Standard) wechselt die
-Seite je Episode. Das
-Beispiel ist eine Startvorlage, keine Referenz für eine faire
-Turnierevaluation: Sein Trainings-Timeout beträgt 1.000 Schritte statt 2.000
-und es sieht jeweils nur einen festen Gegner. Für eine belastbare Evaluation
-sind weitere Gegner, beide Seiten und getrennte Tests sinnvoll. Für einen
-langen GPU-Lauf genügen dieselben Optionen, etwa:
+### Tutorial: Was geschieht in diesem Beispiel?
+
+Das Beispiel besteht aus genau zwei Dateien mit unterschiedlichen Aufgaben:
+
+| Datei | Aufgabe |
+| --- | --- |
+| [`pong_opponent_env.py`](pong_opponent_env.py) | Macht aus Pong mit zwei Spielern eine Gymnasium-Umgebung: Eine Seite wird trainiert, die andere wird von einer ONNX-Datei gesteuert. |
+| [`train_dqn_vanilla.py`](train_dqn_vanilla.py) | Baut das DQN, ruft `learn()` auf und exportiert das Ergebnis wieder als ONNX-Datei. |
+
+Die folgende Abbildung beschreibt einen Trainingsschritt. Wichtig: Der
+ONNX-Gegner und der spätere Turnier-Runner sehen das **öffentliche** Format;
+das trainierte DQN bekommt zusätzlich ein internes Seitenmerkmal.
+
+```mermaid
+flowchart LR
+    arena[PettingZoo Pong] -->|je Spieler: RGB-Frame| env[PongVsOnnxEnv]
+    env -->|4 Frames, image + player_id| opponent[ONNX-Gegner<br/>ModelAgent]
+    opponent -->|Aktion| env
+    env -->|12 Bildkanäle + 1 Seitenkanal| dqn[Stable-Baselines3 DQN]
+    dqn -->|Aktion der trainierten Seite| env
+    dqn -->|Q-Netz| export[OnnxPolicy]
+    export -->|12 Bildkanäle + player_id| submission[Abgabe: .onnx]
+```
+
+#### Schritt 1: Einen Gegner wählen
+
+Vor dem Training erzeugt `create_baselines.py` die beiden Beispielmodelle.
+Die Standardoption `baseline_pong_track_ball.onnx` verfolgt Ball und eigenen
+Schläger, ist aber kein gelerntes Modell. Sie ist ein reproduzierbarer,
+fester Trainingsgegner.
+
+```bash
+python create_baselines.py
+python train_dqn_vanilla.py \
+  --opponent baselines/baseline_pong_track_ball.onnx
+```
+
+Jede turnierkompatible ONNX-Datei kann Gegner sein:
+
+```bash
+python train_dqn_vanilla.py --opponent pfad/zu/gegner.onnx
+```
+
+Der Adapter lädt den Gegner über `ModelAgent` aus `app.py`. Er erhält daher
+seine eigenen vier Rohframes, seine echte `player_id` und wird mit ONNX
+Runtime auf CPU ausgeführt — genauso wie im Browser-Turnier.
+
+#### Schritt 2: Eine Zwei-Spieler-Arena wird zu einer Lernumgebung
+
+Pong liefert gleichzeitig Beobachtungen und Rewards für beide physischen
+Spieler. DQN kann dagegen nur einen Agenten trainieren. `PongVsOnnxEnv`
+übernimmt deshalb pro Episode eine Seite als trainierten Agenten und spielt
+die andere mit dem gewählten ONNX-Gegner.
+
+`--player-id 0` ist der Standard: Bei jedem `reset()` wird zufällig links
+oder rechts als trainierte Seite gewählt. Damit lernt das Beispiel beide
+physischen Rollen. Alternativ erzwingen diese Aufrufe eine einzelne Seite:
+
+```bash
+# nur links/orange trainieren
+python train_dqn_vanilla.py --player-id 1
+
+# nur rechts/grün trainieren
+python train_dqn_vanilla.py --player-id 2
+```
+
+Eine Episode endet nach einem Punkt, einem technischen Ende der Arena oder
+nach 1.000 Schritten ohne Punkt. Beim Timeout wird die Episode abgeschnitten
+(`truncated=True`) und der Reward bleibt `0`. Das ist nur eine
+Trainingsentscheidung; im Turnier gilt die eigene 2.000-Schritte-Regel.
+
+#### Schritt 3: Beobachtung und `player_id`
+
+Die ersten zwölf Kanäle sind genau die spätere ONNX-Eingabe: vier RGB-Frames,
+ältester zuerst, normalisiert auf Werte von `0` bis `1`. Für DQN ergänzt die
+Trainingsumgebung intern einen dreizehnten Kanal:
+
+| Kanal(e) im DQN-Training | Inhalt |
+| --- | --- |
+| `0–11` | Vier öffentliche RGB-Frames (`4 × 3` Kanäle) |
+| `12` | überall `0` für links/orange (`player_id=1`) bzw. `1` für rechts/grün (`player_id=2`) |
+
+`PongCNN` beschneidet aus den zwölf Bildkanälen das Spielfeld, wandelt in
+Graustufen um und skaliert auf `84 × 84`. Das CNN erzeugt daraus 512
+Bildmerkmale. Der konstante Seitenwert wird als 513. Merkmal angehängt.
+Dadurch kann das Q-Netz wirklich unterschiedliche Entscheidungen für beide
+Seiten lernen.
+
+Die Abgabe bleibt trotzdem beim verpflichtenden öffentlichen Vertrag mit
+zwölf Bildkanälen. `OnnxPolicy` erzeugt beim Export den internen 13. Kanal
+erst aus `player_id`. Deshalb ist `player_id` keine Export-Krücke, sondern
+eine echte Eingabe des gelernten Q-Netzes.
+
+#### Schritt 4: Was DQN lernt
+
+DQN schätzt für jede Aktion einen Q-Wert: den erwarteten zukünftigen Reward.
+Das Netz liefert sechs Werte und wählt während der Ausführung die Aktion mit
+dem größten Wert (`argmax`). Der Pong-Reward des trainierten Spielers wird
+unverändert an DQN weitergegeben: Ein gewonnener Ballwechsel ist positiv,
+ein verlorener negativ; während des Ballwechsels ist er normalerweise null.
+
+Die im Beispiel fest eingestellten Werte sind typische Atari-Startwerte,
+keine Challenge-Regeln:
+
+| Einstellung | Wert | Bedeutung |
+| --- | ---: | --- |
+| Replay-Buffer | 100.000 | Vergangene Übergänge, aus denen DQN zufällig lernt. |
+| Anfangszufall | 80.000 Schritte | Vor den ersten Updates wird zunächst Erfahrung gesammelt. |
+| Exploration | von 1,0 auf 0,01 in 40 % des Laufs | Zu Beginn viele zufällige Aktionen, später überwiegend beste bekannte Aktion. |
+| Batch-Größe | 32 | Übergänge pro Lernupdate. |
+| Update-Frequenz | alle 4 Schritte | Wie oft DQN seine Gewichte aktualisiert. |
+| Target-Netz-Update | alle 1.000 Schritte | Stabilisiert die Q-Lernziele. |
+
+Für einen reinen Pipeline-Test genügt ein kurzer Lauf. Er erzeugt bereits
+eine ONNX-Datei, kann wegen der 80.000 Anfangsschritte aber noch nichts
+Sinnvolles gelernt haben:
+
+```bash
+python train_dqn_vanilla.py --timesteps 1000 --export-every 500 \
+  --output baselines/smoke_test.onnx
+python validate_submission.py baselines/smoke_test.onnx
+```
+
+Ein erster ernsthafter Versuch benötigt deutlich mehr Schritte. Für einen
+längeren GPU-Lauf genügen dieselben Optionen, etwa:
 
 ```bash
 python train_dqn_vanilla.py --device cuda --timesteps 5000000 \
@@ -226,9 +342,36 @@ python train_dqn_vanilla.py --device cuda --timesteps 5000000 \
   --output baselines/baseline_pong_dqn.onnx
 ```
 
-Training kann CPU, Apple Silicon oder CUDA verwenden. Eine GPU kann längere
-Läufe beschleunigen, ist aber weder für alle Gruppen noch für die Ausführung
-der Abgabe erforderlich.
+#### Schritt 5: Checkpoints, Export und Test
+
+Alle `--export-every` Schritte schreibt das Skript zwei Dateien mit derselben
+Schrittnummer:
+
+| Datei | Zweck |
+| --- | --- |
+| `…_step_N.zip` | Stable-Baselines3-Checkpoint; nur zum Fortsetzen oder Analysieren des Trainings. |
+| `…_step_N.onnx` | Portable Policy für Validator und Browser-Runner. |
+
+Nach Ende des Laufs entstehen außerdem der finale Export aus `--output` und
+eine gleichnamige `.zip`-Datei. Nur die `.onnx`-Datei ist eine mögliche
+Abgabe. Vor dem Turnier sollten Gruppen sie erst technisch validieren und
+dann im Browser gegen eine Baseline testen:
+
+```bash
+python validate_submission.py baselines/baseline_pong_dqn.onnx
+PORT=5001 python app.py
+```
+
+Mit `--opponent andere_policy.onnx` lässt sich jeder technisch kompatible
+ONNX-Gegner wählen; `--player-id 1` trainiert nur links/orange,
+`--player-id 2` nur rechts/grün und `--player-id 0` (Standard) wechselt die
+Seite je Episode. Das Beispiel ist eine Startvorlage, keine Referenz für eine
+faire Turnierevaluation: Sein Trainings-Timeout beträgt 1.000 Schritte statt 2.000
+und es sieht jeweils nur einen festen Gegner. Für eine belastbare Evaluation
+sind weitere Gegner, beide Seiten und getrennte Tests sinnvoll. Training kann
+CPU, Apple Silicon oder CUDA verwenden. Eine GPU kann längere Läufe
+beschleunigen, ist aber weder für alle Gruppen noch für die Ausführung der
+Abgabe erforderlich.
 
 ### Offene methodische Entscheidungen
 
