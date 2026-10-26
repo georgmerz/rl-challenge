@@ -49,6 +49,15 @@ Create baseline → validate ONNX → run match → run DQN briefly → test own
 **Python 3.11** is recommended. The local runner executes ONNX models on the
 CPU; a GPU is not required to run a submission.
 
+Alternatively, open the complete shared walkthrough in Google Colab:
+
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/georgmerz/rl-challenge/blob/main/RL_Challenge_Colab.ipynb)
+
+The notebook installs the dependencies and Atari ROMs, creates the baselines,
+opens the browser runner in a Colab iframe, and executes the short DQN/ONNX
+test. Colab storage is temporary, so download generated models before the
+runtime ends.
+
 ```bash
 cd rl-challenge
 python -m venv .venv

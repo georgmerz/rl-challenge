@@ -49,6 +49,16 @@ Baseline erzeugen → ONNX validieren → Duell starten → DQN kurz ausführen 
 Empfohlen ist **Python 3.11**. Der lokale Runner verwendet ONNX Runtime auf
 CPU; zum Ausführen einer Abgabe ist keine GPU nötig.
 
+Alternativ kann der gemeinsame Durchlauf vollständig in Google Colab geöffnet
+werden:
+
+[![In Colab öffnen](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/georgmerz/rl-challenge/blob/main/RL_Challenge_Colab.ipynb)
+
+Das Notebook installiert die Abhängigkeiten und Atari-ROMs, erzeugt die
+Baselines, öffnet den Browser-Runner in einem Colab-iframe und führt den kurzen
+DQN-/ONNX-Test aus. Der Colab-Speicher ist temporär; erzeugte Modelle müssen am
+Ende heruntergeladen werden.
+
 ```bash
 cd rl-challenge
 python -m venv .venv
