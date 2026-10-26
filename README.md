@@ -48,6 +48,13 @@ vorbeispielen. Der Gegner im eigentlichen Turnier ist während des Trainings
 nicht bekannt. Das Browser-Turnier vergleicht deshalb zwei unabhängig
 hochgeladene Modelle.
 
+> **Verbindliche Turnierregeln:** [`app.py`](app.py) ist die maßgebliche
+> Implementierung für Rundenanzahl, Seitenwechsel, Seeds, Timeout, Punkte,
+> Gewinner und die ONNX-Schnittstelle. PettingZoo/ALE definiert dagegen die
+> eigentliche Pong-Spielmechanik, Aktionen und Environment-Rewards. Regeln
+> eines Trainingsbeispiels (etwa ein Trainings-Timeout) gelten nicht
+> automatisch für das Turnier.
+
 ### Architektur: Training ist nicht der Turnier-Runner
 
 | Baustein | Aufgabe |
@@ -83,6 +90,47 @@ flowchart LR
 
     export -. eine ONNX-Abgabe .-> browser
 ```
+
+### Was ist ONNX?
+
+**ONNX** (*Open Neural Network Exchange*) ist ein portables Dateiformat für
+fertig trainierte neuronale Netze. Ihr könnt ein Modell zum Beispiel mit
+PyTorch trainieren und anschließend als `.onnx` exportieren. Der
+Turnier-Runner benötigt weder euren Trainingscode noch PyTorch: Er lädt nur
+die ONNX-Datei mit ONNX Runtime auf CPU und ruft ihre Policy auf.
+
+```text
+Training mit PyTorch / Stable-Baselines3  →  Export als .onnx  →  Browser-Runner
+       Gewichte werden gelernt               feste Schnittstelle     nur Inferenz
+```
+
+Eine ONNX-Datei enthält damit Architektur und gelernte Gewichte für die
+Inferenz, aber nicht Replay-Buffer, Optimierer, Trainingsdaten oder Python-
+Klassen. Sie ist die **technische Abgabe**. Damit der Runner sie ausführen
+kann, muss sie genau die in Abschnitt 3 beschriebene Eingabe `image` und
+`player_id` sowie die Ausgabe `action` bereitstellen.
+
+Kurz gesagt exportiert man nach dem Training ein PyTorch-Modell mit
+`torch.onnx.export(...)`. Die Beispieltensoren müssen dabei genau dem
+Turniervertrag entsprechen:
+
+```python
+model.eval()
+image = torch.zeros((1, 12, 210, 160), dtype=torch.float32)
+player_id = torch.ones((1,), dtype=torch.int64)
+torch.onnx.export(
+    model, (image, player_id), "my_policy.onnx",
+    input_names=["image", "player_id"], output_names=["action"], opset_version=17,
+)
+```
+
+Das Modell muss in seinem `forward` aus diesen Eingaben eine gültige
+`int64`-Aktion liefern. Anschließend sollte die Datei mit
+`python validate_submission.py my_policy.onnx` geprüft werden. Hintergrund und
+weitere Varianten erklärt die
+[offizielle PyTorch-ONNX-Dokumentation](https://docs.pytorch.org/docs/stable/onnx.html).
+Der Validator prüft CPU-Lauffähigkeit, Schnittstelle und Aktionsbereich, aber
+nicht Spielstärke, Dateigröße oder ONNX-Opset vollständig.
 
 ### Regeln einer Partie
 
@@ -184,23 +232,11 @@ zulässigen Algorithmus noch eine faire Evaluation im Turnier.
 
 ### DQN-Minimalbeispiel
 
-[`train_dqn_vanilla.py`](train_dqn_vanilla.py) ist der kurze, kommentierte
-Einstieg. Es erzeugt DQN, startet das Lernen und exportiert ONNX. Der
-Zwei-Spieler-Adapter [`pong_opponent_env.py`](pong_opponent_env.py) baut Pong
-gegen ein **wählbares ONNX-Gegnermodell** auf und benutzt dafür dieselbe
-`ModelAgent`-Schnittstelle wie der Turnier-Runner. Das Beispiel trainiert
-standardmäßig auf **beiden Seiten abwechselnd** gegen die Ball-Tracking-
-Baseline. Intern ergänzt die Trainingsumgebung zu den zwölf Bildkanälen einen
-13. Kanal mit der Seite (`0` für links, `1` für rechts). Das Q-Netz erhält
-dieses Seitenmerkmal zusätzlich zu den Bildmerkmalen. Beim ONNX-Export erzeugt
-das Modell diesen Kanal aus der verpflichtenden öffentlichen Eingabe
-`player_id`; die Turnier-Schnittstelle selbst bleibt also unverändert. Es
-beschneidet das Spielfeld,
-verwendet Graustufen, `84 × 84` Pixel und vier Trainingsframes. Diese
-Vorverarbeitung liegt im PyTorch-Netz selbst: Der Environment-Adapter stapelt
-und normalisiert nur die vier Rohframes zum öffentlichen 12-Kanal-Format;
-Beschneiden, Graustufen und Skalieren werden beim ONNX-Export unverändert Teil
-des Modells.
+[`train_dqn_vanilla.py`](train_dqn_vanilla.py) ist ein funktionierender
+Startpunkt für Stable-Baselines3-DQN. Die zugehörige
+[`pong_opponent_env.py`](pong_opponent_env.py) trainiert gegen ein wählbares
+ONNX-Gegnermodell und verwendet dafür dieselbe ONNX-Schnittstelle wie der
+Turnier-Runner.
 
 ```bash
 python create_baselines.py
@@ -209,122 +245,21 @@ python train_dqn_vanilla.py --timesteps 1000000 \
   --output baselines/baseline_pong_dqn.onnx
 ```
 
-### Tutorial: Was geschieht in diesem Beispiel?
+So arbeitet das Beispiel:
 
-Das Beispiel besteht aus genau zwei Dateien mit unterschiedlichen Aufgaben:
+1. `PongVsOnnxEnv` trainiert pro Episode eine Seite und lässt die andere
+   Seite mit dem ONNX-Gegner spielen. `--player-id 0` (Standard) wechselt die
+   trainierte Seite; `1` und `2` erzwingen links bzw. rechts.
+2. Das DQN erhält vier RGB-Frames. Intern wird die Seite als zusätzliches
+   Merkmal ergänzt; beim Export erzeugt `OnnxPolicy` dieses Merkmal wieder aus
+   der öffentlichen `player_id`.
+3. DQN lernt aus dem unveränderten Pong-Reward und schreibt alle
+   `--export-every` Schritte ein `.zip`-Checkpoint sowie eine `.onnx`-Datei.
 
-| Datei | Aufgabe |
-| --- | --- |
-| [`pong_opponent_env.py`](pong_opponent_env.py) | Macht aus Pong mit zwei Spielern eine Gymnasium-Umgebung: Eine Seite wird trainiert, die andere wird von einer ONNX-Datei gesteuert. |
-| [`train_dqn_vanilla.py`](train_dqn_vanilla.py) | Baut das DQN, ruft `learn()` auf und exportiert das Ergebnis wieder als ONNX-Datei. |
-
-Die folgende Abbildung beschreibt einen Trainingsschritt. Wichtig: Der
-ONNX-Gegner und der spätere Turnier-Runner sehen das **öffentliche** Format;
-das trainierte DQN bekommt zusätzlich ein internes Seitenmerkmal.
-
-```mermaid
-flowchart LR
-    arena[PettingZoo Pong] -->|je Spieler: RGB-Frame| env[PongVsOnnxEnv]
-    env -->|4 Frames, image + player_id| opponent[ONNX-Gegner<br/>ModelAgent]
-    opponent -->|Aktion| env
-    env -->|12 Bildkanäle + 1 Seitenkanal| dqn[Stable-Baselines3 DQN]
-    dqn -->|Aktion der trainierten Seite| env
-    dqn -->|Q-Netz| export[OnnxPolicy]
-    export -->|12 Bildkanäle + player_id| submission[Abgabe: .onnx]
-```
-
-#### Schritt 1: Einen Gegner wählen
-
-Vor dem Training erzeugt `create_baselines.py` die beiden Beispielmodelle.
-Die Standardoption `baseline_pong_track_ball.onnx` verfolgt Ball und eigenen
-Schläger, ist aber kein gelerntes Modell. Sie ist ein reproduzierbarer,
-fester Trainingsgegner.
-
-```bash
-python create_baselines.py
-python train_dqn_vanilla.py \
-  --opponent baselines/baseline_pong_track_ball.onnx
-```
-
-Jede turnierkompatible ONNX-Datei kann Gegner sein:
-
-```bash
-python train_dqn_vanilla.py --opponent pfad/zu/gegner.onnx
-```
-
-Der Adapter lädt den Gegner über `ModelAgent` aus `app.py`. Er erhält daher
-seine eigenen vier Rohframes, seine echte `player_id` und wird mit ONNX
-Runtime auf CPU ausgeführt — genauso wie im Browser-Turnier.
-
-#### Schritt 2: Eine Zwei-Spieler-Arena wird zu einer Lernumgebung
-
-Pong liefert gleichzeitig Beobachtungen und Rewards für beide physischen
-Spieler. DQN kann dagegen nur einen Agenten trainieren. `PongVsOnnxEnv`
-übernimmt deshalb pro Episode eine Seite als trainierten Agenten und spielt
-die andere mit dem gewählten ONNX-Gegner.
-
-`--player-id 0` ist der Standard: Bei jedem `reset()` wird zufällig links
-oder rechts als trainierte Seite gewählt. Damit lernt das Beispiel beide
-physischen Rollen. Alternativ erzwingen diese Aufrufe eine einzelne Seite:
-
-```bash
-# nur links/orange trainieren
-python train_dqn_vanilla.py --player-id 1
-
-# nur rechts/grün trainieren
-python train_dqn_vanilla.py --player-id 2
-```
-
-Eine Episode endet nach einem Punkt, einem technischen Ende der Arena oder
-nach 1.000 Schritten ohne Punkt. Beim Timeout wird die Episode abgeschnitten
-(`truncated=True`) und der Reward bleibt `0`. Das ist nur eine
-Trainingsentscheidung; im Turnier gilt die eigene 2.000-Schritte-Regel.
-
-#### Schritt 3: Beobachtung und `player_id`
-
-Die ersten zwölf Kanäle sind genau die spätere ONNX-Eingabe: vier RGB-Frames,
-ältester zuerst, normalisiert auf Werte von `0` bis `1`. Für DQN ergänzt die
-Trainingsumgebung intern einen dreizehnten Kanal:
-
-| Kanal(e) im DQN-Training | Inhalt |
-| --- | --- |
-| `0–11` | Vier öffentliche RGB-Frames (`4 × 3` Kanäle) |
-| `12` | überall `0` für links/orange (`player_id=1`) bzw. `1` für rechts/grün (`player_id=2`) |
-
-`PongCNN` beschneidet aus den zwölf Bildkanälen das Spielfeld, wandelt in
-Graustufen um und skaliert auf `84 × 84`. Das CNN erzeugt daraus 512
-Bildmerkmale. Der konstante Seitenwert wird als 513. Merkmal angehängt.
-Dadurch kann das Q-Netz wirklich unterschiedliche Entscheidungen für beide
-Seiten lernen.
-
-Die Abgabe bleibt trotzdem beim verpflichtenden öffentlichen Vertrag mit
-zwölf Bildkanälen. `OnnxPolicy` erzeugt beim Export den internen 13. Kanal
-erst aus `player_id`. Deshalb ist `player_id` keine Export-Krücke, sondern
-eine echte Eingabe des gelernten Q-Netzes.
-
-#### Schritt 4: Was DQN lernt
-
-DQN schätzt für jede Aktion einen Q-Wert: den erwarteten zukünftigen Reward.
-Das Netz liefert sechs Werte und wählt während der Ausführung die Aktion mit
-dem größten Wert (`argmax`). Der Pong-Reward des trainierten Spielers wird
-unverändert an DQN weitergegeben: Ein gewonnener Ballwechsel ist positiv,
-ein verlorener negativ; während des Ballwechsels ist er normalerweise null.
-
-Die im Beispiel fest eingestellten Werte sind typische Atari-Startwerte,
-keine Challenge-Regeln:
-
-| Einstellung | Wert | Bedeutung |
-| --- | ---: | --- |
-| Replay-Buffer | 100.000 | Vergangene Übergänge, aus denen DQN zufällig lernt. |
-| Anfangszufall | 80.000 Schritte | Vor den ersten Updates wird zunächst Erfahrung gesammelt. |
-| Exploration | von 1,0 auf 0,01 in 40 % des Laufs | Zu Beginn viele zufällige Aktionen, später überwiegend beste bekannte Aktion. |
-| Batch-Größe | 32 | Übergänge pro Lernupdate. |
-| Update-Frequenz | alle 4 Schritte | Wie oft DQN seine Gewichte aktualisiert. |
-| Target-Netz-Update | alle 1.000 Schritte | Stabilisiert die Q-Lernziele. |
-
-Für einen reinen Pipeline-Test genügt ein kurzer Lauf. Er erzeugt bereits
-eine ONNX-Datei, kann wegen der 80.000 Anfangsschritte aber noch nichts
-Sinnvolles gelernt haben:
+Der 1.000-Schritte-Timeout und der feste Gegner gelten nur für dieses
+Trainingsbeispiel, nicht für das Turnier. Ein kurzer Pipeline-Test kann schon
+eine technisch gültige Datei erzeugen, lernt wegen der ersten 80.000
+Explorationsschritte aber noch keine sinnvolle Policy:
 
 ```bash
 python train_dqn_vanilla.py --timesteps 1000 --export-every 500 \
@@ -332,51 +267,18 @@ python train_dqn_vanilla.py --timesteps 1000 --export-every 500 \
 python validate_submission.py baselines/smoke_test.onnx
 ```
 
-Ein erster ernsthafter Versuch benötigt deutlich mehr Schritte. Für einen
-längeren GPU-Lauf genügen dieselben Optionen, etwa:
+Nach einem Lauf sind die `.onnx`-Dateien für Browser und Abgabe gedacht; die
+gleichnamigen `.zip`-Dateien dienen nur dem Fortsetzen oder Analysieren des
+SB3-Trainings. Das Beispiel ist ein Einstieg, keine Referenz für faire
+Turnierbewertung: Gruppen sollten später über weitere Gegner, beide Seiten
+und getrennte Evaluationen nachdenken. Training kann CPU, Apple Silicon oder
+CUDA verwenden; eine GPU beschleunigt längere Läufe, ist aber nicht nötig.
 
-```bash
-python train_dqn_vanilla.py --device cuda --timesteps 5000000 \
-  --opponent baselines/baseline_pong_track_ball.onnx \
-  --export-every 250000 \
-  --output baselines/baseline_pong_dqn.onnx
-```
+## 5. Was sollten Sie im Bericht diskutieren?
 
-#### Schritt 5: Checkpoints, Export und Test
-
-Alle `--export-every` Schritte schreibt das Skript zwei Dateien mit derselben
-Schrittnummer:
-
-| Datei | Zweck |
-| --- | --- |
-| `…_step_N.zip` | Stable-Baselines3-Checkpoint; nur zum Fortsetzen oder Analysieren des Trainings. |
-| `…_step_N.onnx` | Portable Policy für Validator und Browser-Runner. |
-
-Nach Ende des Laufs entstehen außerdem der finale Export aus `--output` und
-eine gleichnamige `.zip`-Datei. Nur die `.onnx`-Datei ist eine mögliche
-Abgabe. Vor dem Turnier sollten Gruppen sie erst technisch validieren und
-dann im Browser gegen eine Baseline testen:
-
-```bash
-python validate_submission.py baselines/baseline_pong_dqn.onnx
-PORT=5001 python app.py
-```
-
-Mit `--opponent andere_policy.onnx` lässt sich jeder technisch kompatible
-ONNX-Gegner wählen; `--player-id 1` trainiert nur links/orange,
-`--player-id 2` nur rechts/grün und `--player-id 0` (Standard) wechselt die
-Seite je Episode. Das Beispiel ist eine Startvorlage, keine Referenz für eine
-faire Turnierevaluation: Sein Trainings-Timeout beträgt 1.000 Schritte statt 2.000
-und es sieht jeweils nur einen festen Gegner. Für eine belastbare Evaluation
-sind weitere Gegner, beide Seiten und getrennte Tests sinnvoll. Training kann
-CPU, Apple Silicon oder CUDA verwenden. Eine GPU kann längere Läufe
-beschleunigen, ist aber weder für alle Gruppen noch für die Ausführung der
-Abgabe erforderlich.
-
-### Offene methodische Entscheidungen
-
-Folgende Entscheidungen sind absichtlich nicht durch den Runner festgelegt und
-sollten im Bericht begründet werden:
+Begründen Sie die wichtigsten Entwurfsentscheidungen Ihres Ansatzes. Der
+Runner gibt diese Punkte nicht vor; sie sind deshalb besonders geeignet, um
+Ihre Methode und deren Grenzen nachvollziehbar zu machen:
 
 - State-Design: vollständige Bilder, gestapelte Frames oder zulässige intern
   aus Bildern abgeleitete Merkmale;
@@ -388,58 +290,6 @@ sollten im Bericht begründet werden:
 Das Browser-Turnier deckt bereits zehn feste Runden und beide Seiten ab. Für
 eine belastbare Aussage über Spielstärke empfiehlt sich zusätzlich eine eigene
 Evaluation über mehr Seeds und unterschiedliche Gegner.
-
-## 5. PyTorch-Modell exportieren und prüfen
-
-Für eine PyTorch-Policy sind beim Export vier Dinge wichtig:
-
-1. `forward` nimmt beide Eingaben in der Reihenfolge `image, player_id` an.
-2. Die Ausgabe ist ein `torch.int64`-Tensor der Form `[1]`, nicht etwa
-   Aktionswahrscheinlichkeiten oder Q-Werte.
-3. `eval()` schaltet das Modell in den Inferenzmodus. Die Beispieltensoren
-   haben exakt die öffentliche Form und Datentypen.
-4. `player_id` muss im Rechengraphen verwendet werden. Wird es ignoriert,
-   kann PyTorch die Eingabe beim Export entfernen und der Runner lehnt das
-   Modell ab.
-
-Dieses absichtlich schwache Modell ist ein vollständiger technischer
-Exporttest:
-
-```python
-import torch
-
-
-class Policy(torch.nn.Module):
-    def forward(self, image: torch.Tensor, player_id: torch.Tensor) -> torch.Tensor:
-        # Absichtlich keine starke Policy: Sie verwendet aber beide Eingaben.
-        side_action = player_id - 1
-        pixel_action = (image[:, 0, 0, 0] > 0.5).to(torch.int64)
-        return (side_action + pixel_action).clamp(0, 5)
-
-
-policy = Policy().eval()
-image = torch.zeros((1, 12, 210, 160), dtype=torch.float32)
-player_id = torch.ones((1,), dtype=torch.int64)
-torch.onnx.export(
-    policy,
-    (image, player_id),
-    "my_policy.onnx",
-    input_names=["image", "player_id"],
-    output_names=["action"],
-    opset_version=17,
-)
-```
-
-Danach den Export technisch prüfen:
-
-```bash
-python validate_submission.py my_policy.onnx
-```
-
-Der Validator lädt das Modell mit der CPU-Laufzeit und prüft Schnittstelle
-sowie Aktionsbereich mit leeren Testframes für beide Seiten. Er bewertet
-**nicht** die Spielstärke und prüft weder Dateigröße noch ONNX-Opset
-vollständig. Diese beiden Abgabevorgaben müssen zusätzlich eingehalten werden.
 
 ## 6. Abgabe und Bericht
 
