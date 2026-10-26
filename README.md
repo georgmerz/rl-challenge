@@ -184,16 +184,11 @@ zulässigen Algorithmus noch eine faire Evaluation im Turnier.
 
 ### DQN-Minimalbeispiel
 
-[`train_dqn_vanilla.py`](train_dqn_vanilla.py) ist bewusst der kurze,
-kommentierte Einstieg: Es erzeugt Umgebung und DQN, startet das Lernen und
-exportiert die finale ONNX-Datei in vier Schritten. Die technische
-Implementierung des Zwei-Spieler-Adapters, der Bildvorverarbeitung und des
-ONNX-Exports liegt in [`_training_support.py`](_training_support.py); sie muss
-für den ersten Lauf nicht verändert werden.
-
-Das Beispiel trainiert Standard-DQN aus Stable-Baselines3 ausschließlich als
-linken/orangen Spieler (`player_id=1`) gegen die feste Ball-Tracking-Baseline.
-Es beschneidet das Spielfeld,
+[`train_dqn_vanilla.py`](train_dqn_vanilla.py) ist ein vollständiges,
+kommentiertes Skript ohne weitere Trainingsmodule. Es erzeugt Pong, DQN und
+ONNX-Export in einer Datei. Der Agent spielt im **Self-Play** gegen seine
+aktuelle greedy ausgeführte Policy; die trainierte Seite wechselt pro Episode
+zwischen links/orange und rechts/grün. Es beschneidet das Spielfeld,
 verwendet Graustufen, `84 × 84` Pixel und vier Trainingsframes. Diese
 Vorverarbeitung liegt im PyTorch-Netz selbst: Der Environment-Adapter stapelt
 und normalisiert nur die vier Rohframes zum öffentlichen 12-Kanal-Format;
@@ -206,13 +201,15 @@ python train_dqn_vanilla.py --timesteps 1000000 \
 ```
 
 Das Beispiel ist eine Startvorlage, keine Referenz für eine faire
-Turnierevaluation: Sein Trainings-Timeout beträgt 1.000 Schritte statt 2.000
-und es sieht nur einen festen Gegner sowie eine Seite. Für einen langen
-GPU-Lauf genügen dieselben Optionen, etwa:
+Turnierevaluation: Sein Trainings-Timeout beträgt 1.000 Schritte statt 2.000;
+sein Gegner ändert sich zugleich mit der eigenen Policy. Das macht Self-Play
+einfach sichtbar, aber auch nichtstationär. Für eine belastbare Evaluation
+sind feste zusätzliche Gegner und getrennte Tests weiterhin sinnvoll. Für
+einen langen GPU-Lauf genügen dieselben Optionen, etwa:
 
 ```bash
 python train_dqn_vanilla.py --device cuda --timesteps 5000000 \
-  --exploration-fraction 0.4 --export-every 250000 \
+  --export-every 250000 \
   --output baselines/baseline_pong_dqn.onnx
 ```
 
