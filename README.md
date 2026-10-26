@@ -12,7 +12,7 @@ ONNX-Datei ein.
 | Technische Abgabe | Genau eine `.onnx`-Datei pro Gruppe, höchstens 250 MB, ONNX Opset 17. |
 | Lokaler Test | Zwei ONNX-Modelle im Browser gegeneinander spielen lassen. Das zweite Modell ist nur ein Testgegner, keine zweite Abgabe. |
 | Bericht | 5–8 Seiten als Grundlage der Endnote. |
-| Vorbereitung | 06.11.2026. |
+| Vorbereitung | 30.10.2026 (diesen Freitag). |
 | Präsentation und Turnier | 13.11.2026, Präsentation der Ergebnisse in 10 Minuten. |
 
 ## 1. Schnellstart: Runner und Baselines testen
@@ -304,4 +304,4 @@ der Endnote. Er soll mindestens behandeln:
 Vor der Abgabe die ONNX-Datei validieren und lokal gegen einen Testgegner
 spielen lassen. Bei der Präsentation am **13.11.2026** stellt jede Gruppe ihr
 Vorgehen und ihre Ergebnisse in **10 Minuten** vor; der Vorbereitungstermin
-ist am **06.11.2026**.
+ist am **30.10.2026**.
