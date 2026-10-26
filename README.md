@@ -10,7 +10,8 @@ ONNX-Datei einzureichen.
 | Baustein | Aufgabe |
 | --- | --- |
 | Arena | [PettingZoo Atari Pong (`pong_v3`)](https://pettingzoo.farama.org/main/environments/atari/pong/) mit zwei Spielern. |
-| Browser-Runner | [`app.py`](app.py) lädt zwei ONNX-Modelle, führt die Partie aus, verwaltet Frames, Seiten, Punkte und zeigt die Arena an. |
+| Browser-Oberfläche | [`index.html`](index.html) lässt zwei Modelle auswählen und zeigt Arena, Punktestand und Status. |
+| Turnier-Runner | `GameSession` in [`app.py`](app.py) lädt beide ONNX-Modelle, ruft sie pro Frame auf und verwaltet Frame-Stack, Seitenwechsel, Runden und Punkte. |
 | Modell | Reine ONNX-Policy-Inferenz: Sie erhält nur `image` und `player_id` und gibt eine Aktion zurück. Sie hat keinen direkten Zugriff auf Environment, Punktestand oder gegnerische Aktion. |
 | Training | Eigene, von der Gruppe gewählte Offline-/Trainingsprogramme. Die Beispiele im Repository erzeugen ONNX-Dateien, sind aber nicht Teil des Turnier-Runners. |
 
@@ -20,14 +21,14 @@ flowchart LR
         method[RL-Algorithmus und Training] --> export[ONNX-Export]
     end
 
-    subgraph tournament[Lokaler Browser-Runner]
-        browser[Browser: zwei Modelle auswählen]
-        runner[app.py: Frame-Stack, Seitenwechsel, Punkte]
+    subgraph tournament[Lokales Turniersystem]
+        browser[Browser-Oberfläche: index.html]
+        runner["Turnier-Runner: GameSession in app.py<br/>Modelle laden, Frames und Spielablauf steuern"]
         arena[PettingZoo Atari Pong]
         model1["ONNX-Modell 1<br/>reine Policy"]
         model2["ONNX-Modell 2<br/>reine Policy"]
 
-        browser --> runner
+        browser -->|Modelle hochladen, Pause, Stop| runner
         arena -->|RGB-Frames| runner
         runner -->|image + player_id| model1
         runner -->|image + player_id| model2
