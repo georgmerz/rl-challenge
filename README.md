@@ -184,9 +184,16 @@ zulässigen Algorithmus noch eine faire Evaluation im Turnier.
 
 ### DQN-Minimalbeispiel
 
-[`train_dqn_vanilla.py`](train_dqn_vanilla.py) trainiert Standard-DQN aus
-Stable-Baselines3 ausschließlich als linken/orangen Spieler (`player_id=1`)
-gegen die feste Ball-Tracking-Baseline. Es beschneidet das Spielfeld,
+[`train_dqn_vanilla.py`](train_dqn_vanilla.py) ist bewusst der kurze,
+kommentierte Einstieg: Es erzeugt Umgebung und DQN, startet das Lernen und
+exportiert die finale ONNX-Datei in vier Schritten. Die technische
+Implementierung des Zwei-Spieler-Adapters, der Bildvorverarbeitung und des
+ONNX-Exports liegt in [`_training_support.py`](_training_support.py); sie muss
+für den ersten Lauf nicht verändert werden.
+
+Das Beispiel trainiert Standard-DQN aus Stable-Baselines3 ausschließlich als
+linken/orangen Spieler (`player_id=1`) gegen die feste Ball-Tracking-Baseline.
+Es beschneidet das Spielfeld,
 verwendet Graustufen, `84 × 84` Pixel und vier Trainingsframes. Diese
 Vorverarbeitung liegt im PyTorch-Netz selbst: Der Environment-Adapter stapelt
 und normalisiert nur die vier Rohframes zum öffentlichen 12-Kanal-Format;
