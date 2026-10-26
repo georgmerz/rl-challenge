@@ -30,22 +30,30 @@ class PongVsOnnxEnv(gym.Env):
     """Trainiert eine Seite von Pong gegen ein wählbares ONNX-Gegnermodell.
 
     ``player_id=1`` trainiert links/orange, ``player_id=2`` rechts/grün.
-    Die andere Seite wird bei jedem Schritt vom ONNX-Modell gesteuert.
+    Mit ``player_id=None`` wechselt die trainierte Seite pro Episode. Die
+    Beobachtung hat intern 13 Kanäle: zwölf öffentliche Bildkanäle und einen
+    zusätzlichen konstanten Seitenkanal (0 für links, 1 für rechts).
     """
 
     metadata = {"render_modes": []}
 
-    def __init__(self, opponent_model: str | Path, player_id: int = 1, max_episode_steps: int = 1_000) -> None:
-        if player_id not in (1, 2):
-            raise ValueError("player_id muss 1 (links/orange) oder 2 (rechts/grün) sein.")
+    def __init__(
+        self,
+        opponent_model: str | Path,
+        player_id: int | None = None,
+        max_episode_steps: int = 1_000,
+    ) -> None:
+        if player_id not in (None, 1, 2):
+            raise ValueError("player_id muss None, 1 (links/orange) oder 2 (rechts/grün) sein.")
         if max_episode_steps <= 0:
             raise ValueError("max_episode_steps muss positiv sein.")
 
         self.game = pong_v3.parallel_env(render_mode=None, num_players=2)
         self.opponent = ModelAgent(Path(opponent_model))
-        self.player_id = player_id
+        self.training_player_id = player_id
+        self.current_player_id: int | None = None
         self.max_episode_steps = max_episode_steps
-        self.observation_space = spaces.Box(0.0, 1.0, shape=(12, 210, 160), dtype=np.float32)
+        self.observation_space = spaces.Box(0.0, 1.0, shape=(13, 210, 160), dtype=np.float32)
         self.action_space = spaces.Discrete(6)
         self.controlled_player: str | None = None
         self.opponent_player: str | None = None
@@ -53,11 +61,19 @@ class PongVsOnnxEnv(gym.Env):
         self.frames: dict[str, deque[np.ndarray]] | None = None
         self.steps = 0
 
+    def _observation(self) -> np.ndarray:
+        if self.frames is None or self.controlled_player is None or self.current_player_id is None:
+            raise RuntimeError("reset() muss vor der Beobachtung aufgerufen werden.")
+        image = public_image(np.stack(self.frames[self.controlled_player]))
+        side_channel = np.full((1, 210, 160), self.current_player_id - 1, dtype=np.float32)
+        return np.concatenate((image, side_channel), axis=0)
+
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         observations, _ = self.game.reset(seed=seed)
         right_player, left_player = self.game.possible_agents
-        if self.player_id == 1:
+        self.current_player_id = self.training_player_id or (1 + int(self.np_random.integers(2)))
+        if self.current_player_id == 1:
             self.controlled_player, self.opponent_player, self.opponent_id = left_player, right_player, 2
         else:
             self.controlled_player, self.opponent_player, self.opponent_id = right_player, left_player, 1
@@ -66,7 +82,7 @@ class PongVsOnnxEnv(gym.Env):
             for player in self.game.possible_agents
         }
         self.steps = 0
-        return public_image(np.stack(self.frames[self.controlled_player])), {}
+        return self._observation(), {}
 
     def step(self, action: int):
         if self.frames is None or self.controlled_player is None or self.opponent_player is None or self.opponent_id is None:
@@ -88,7 +104,7 @@ class PongVsOnnxEnv(gym.Env):
         if terminated or truncated:
             observation = np.zeros(self.observation_space.shape, dtype=np.float32)
         else:
-            observation = public_image(np.stack(self.frames[self.controlled_player]))
+            observation = self._observation()
         return observation, reward, terminated, truncated, {}
 
     def close(self) -> None:

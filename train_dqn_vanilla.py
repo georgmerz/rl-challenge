@@ -32,7 +32,13 @@ def parse_args() -> argparse.Namespace:
         default=Path("baselines/baseline_pong_track_ball.onnx"),
         help="ONNX-Datei des Gegners (Standard: Ball-Tracking-Baseline).",
     )
-    parser.add_argument("--player-id", choices=(1, 2), type=int, default=1, help="Trainierte Seite: 1 links, 2 rechts.")
+    parser.add_argument(
+        "--player-id",
+        choices=(0, 1, 2),
+        type=int,
+        default=0,
+        help="0: Seiten pro Episode wechseln (Standard); 1: links; 2: rechts.",
+    )
     parser.add_argument("--timesteps", type=int, default=1_000_000, help="Anzahl Trainingsschritte.")
     parser.add_argument("--output", default="baselines/baseline_pong_dqn.onnx", help="Ziel für die ONNX-Datei.")
     parser.add_argument("--device", default="auto", help="auto, cuda, mps oder cpu.")
@@ -47,7 +53,7 @@ def main() -> None:
         raise ValueError("--timesteps und --export-every müssen positiv sein.")
 
     # 1. Pong-Umgebung gegen den gewählten ONNX-Gegner erzeugen.
-    env = PongVsOnnxEnv(args.opponent, player_id=args.player_id)
+    env = PongVsOnnxEnv(args.opponent, player_id=None if args.player_id == 0 else args.player_id)
     try:
         # 2. Standard-DQN erstellen. Die festen Werte sind übliche Atari-Startwerte.
         model = DQN(
@@ -84,31 +90,37 @@ def main() -> None:
 
 
 class PongCNN(BaseFeaturesExtractor):
-    """Vorverarbeitung im Modell: identisch beim Training und im ONNX-Export."""
+    """Bildvorverarbeitung plus ein tatsächliches Seitenmerkmal für das Q-Netz."""
 
     def __init__(self, observation_space: spaces.Box, features_dim: int = 512, normalized_image: bool = True) -> None:
-        super().__init__(observation_space, features_dim)
+        # NatureCNN liefert 512 Bildmerkmale; das 513. Merkmal ist die Seite.
+        super().__init__(observation_space, features_dim + 1)
         processed_space = spaces.Box(0.0, 1.0, shape=(FRAME_STACK, 84, 84), dtype=np.float32)
         self.cnn = NatureCNN(processed_space, features_dim=features_dim, normalized_image=normalized_image)
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
-        # [B, 12, 210, 160] -> vier Graustufenbilder [B, 4, 84, 84].
+        # [B, 13, 210, 160] -> vier Graustufenbilder [B, 4, 84, 84].
+        # Kanal 12 enthält überall 0 (links) oder 1 (rechts).
         batch_size = image.shape[0]
-        rgb = image.reshape(batch_size, FRAME_STACK, 3, 210, 160)[:, :, :, 34:194, :]
+        rgb = image[:, :12].reshape(batch_size, FRAME_STACK, 3, 210, 160)[:, :, :, 34:194, :]
         gray = 0.299 * rgb[:, :, 0] + 0.587 * rgb[:, :, 1] + 0.114 * rgb[:, :, 2]
-        return self.cnn(F.interpolate(gray, size=(84, 84), mode="bilinear", align_corners=False))
+        visual_features = self.cnn(F.interpolate(gray, size=(84, 84), mode="bilinear", align_corners=False))
+        side_feature = image[:, 12, 0, 0].unsqueeze(1)
+        return torch.cat((visual_features, side_feature), dim=1)
 
 
 class OnnxPolicy(nn.Module):
-    """Ergänzt das DQN-Q-Netz um die verpflichtende player_id-ONNX-Eingabe."""
+    """Erzeugt aus player_id das Seitenmerkmal für das trainierte Q-Netz."""
 
     def __init__(self, q_net: nn.Module) -> None:
         super().__init__()
         self.q_net = copy.deepcopy(q_net).cpu()
 
     def forward(self, image: torch.Tensor, player_id: torch.Tensor) -> torch.Tensor:
-        action = torch.argmax(self.q_net(image), dim=1).to(torch.int64)
-        return action + player_id * 0  # player_id bleibt Teil der ONNX-Schnittstelle.
+        side_channel = (player_id - 1).to(image.dtype).reshape(-1, 1, 1, 1)
+        side_channel = side_channel.expand(-1, 1, 210, 160)
+        network_input = torch.cat((image, side_channel), dim=1)
+        return torch.argmax(self.q_net(network_input), dim=1).to(torch.int64)
 
 
 def export_onnx(model: DQN, output: Path) -> None:

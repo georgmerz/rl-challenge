@@ -189,8 +189,13 @@ Einstieg. Es erzeugt DQN, startet das Lernen und exportiert ONNX. Der
 Zwei-Spieler-Adapter [`pong_opponent_env.py`](pong_opponent_env.py) baut Pong
 gegen ein **wählbares ONNX-Gegnermodell** auf und benutzt dafür dieselbe
 `ModelAgent`-Schnittstelle wie der Turnier-Runner. Das Beispiel trainiert
-standardmäßig links/orange (`player_id=1`) gegen die Ball-Tracking-Baseline.
-Es beschneidet das Spielfeld,
+standardmäßig auf **beiden Seiten abwechselnd** gegen die Ball-Tracking-
+Baseline. Intern ergänzt die Trainingsumgebung zu den zwölf Bildkanälen einen
+13. Kanal mit der Seite (`0` für links, `1` für rechts). Das Q-Netz erhält
+dieses Seitenmerkmal zusätzlich zu den Bildmerkmalen. Beim ONNX-Export erzeugt
+das Modell diesen Kanal aus der verpflichtenden öffentlichen Eingabe
+`player_id`; die Turnier-Schnittstelle selbst bleibt also unverändert. Es
+beschneidet das Spielfeld,
 verwendet Graustufen, `84 × 84` Pixel und vier Trainingsframes. Diese
 Vorverarbeitung liegt im PyTorch-Netz selbst: Der Environment-Adapter stapelt
 und normalisiert nur die vier Rohframes zum öffentlichen 12-Kanal-Format;
@@ -205,7 +210,9 @@ python train_dqn_vanilla.py --timesteps 1000000 \
 ```
 
 Mit `--opponent andere_policy.onnx` lässt sich jeder technisch kompatible
-ONNX-Gegner wählen; `--player-id 2` trainiert die rechte/grüne Seite. Das
+ONNX-Gegner wählen; `--player-id 1` trainiert nur links/orange,
+`--player-id 2` nur rechts/grün und `--player-id 0` (Standard) wechselt die
+Seite je Episode. Das
 Beispiel ist eine Startvorlage, keine Referenz für eine faire
 Turnierevaluation: Sein Trainings-Timeout beträgt 1.000 Schritte statt 2.000
 und es sieht jeweils nur einen festen Gegner. Für eine belastbare Evaluation
@@ -261,8 +268,10 @@ import torch
 
 class Policy(torch.nn.Module):
     def forward(self, image: torch.Tensor, player_id: torch.Tensor) -> torch.Tensor:
-        action = torch.ones((image.shape[0],), dtype=torch.int64, device=image.device)
-        return action + player_id * 0 + image[:, 0, 0, 0].to(torch.int64) * 0
+        # Absichtlich keine starke Policy: Sie verwendet aber beide Eingaben.
+        side_action = player_id - 1
+        pixel_action = (image[:, 0, 0, 0] > 0.5).to(torch.int64)
+        return (side_action + pixel_action).clamp(0, 5)
 
 
 policy = Policy().eval()
