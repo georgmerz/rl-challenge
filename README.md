@@ -1,9 +1,23 @@
-# RL Challenge: Atari Pong Tournament
+# RL Challenge: Atari Pong
 
-In dieser Challenge entwickeln Teams eine Policy für **Atari Pong**. Zwei
-eingereichte ONNX-Modelle spielen im lokalen Browser-Runner gegeneinander.
-Pong ist bewusst die zugänglichere Alternative zu Surround: Ein Punkt liefert
-sofort ein klares positives bzw. negatives Lernsignal.
+In dieser Challenge entwickeln Gruppen eine Policy für **Atari Pong**. Im
+Turnier trifft sie auf einen zuvor nicht bekannten Gegner. Ziel ist nicht, die
+Spielumgebung zu verändern, sondern eine Policy zu trainieren und als portable
+ONNX-Datei einzureichen.
+
+## Architektur: Training ist nicht der Turnier-Runner
+
+| Baustein | Aufgabe |
+| --- | --- |
+| Arena | [PettingZoo Atari Pong (`pong_v3`)](https://pettingzoo.farama.org/main/environments/atari/pong/) mit zwei Spielern. |
+| Browser-Runner | [`app.py`](app.py) lädt zwei ONNX-Modelle, führt die Partie aus, verwaltet Frames, Seiten, Punkte und zeigt die Arena an. |
+| Modell | Reine ONNX-Policy-Inferenz: Sie erhält nur `image` und `player_id` und gibt eine Aktion zurück. Sie hat keinen direkten Zugriff auf Environment, Punktestand oder gegnerische Aktion. |
+| Training | Eigene, von der Gruppe gewählte Offline-/Trainingsprogramme. Die Beispiele im Repository erzeugen ONNX-Dateien, sind aber nicht Teil des Turnier-Runners. |
+
+Der Runner führt beim lokalen Test **zwei** hochgeladene Modelle gegeneinander
+aus. Das bedeutet nicht, dass zwei Dateien abgegeben werden: Pro Gruppe ist
+genau eine Modell-Datei vorgesehen; die zweite Datei im Browser dient nur als
+Testgegner.
 
 ## Lokalen Runner starten
 
@@ -11,179 +25,215 @@ sofort ein klares positives bzw. negatives Lernsignal.
 cd rl-challenge
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 AutoROM --accept-license
 PORT=5001 python app.py
 ```
 
-Danach `http://127.0.0.1:5001` öffnen. Unter Windows aktiviert ihr die
-Umgebung mit `.venv\Scripts\Activate.ps1`.
+Anschließend [http://127.0.0.1:5001](http://127.0.0.1:5001) öffnen. Unter
+Windows wird die virtuelle Umgebung mit `.venv\Scripts\Activate.ps1`
+aktiviert. Der Runner verwendet die CPU-Referenzlaufzeit von ONNX Runtime;
+eine GPU ist zum Ausführen eines abgegebenen Modells nicht nötig.
 
-## Aufgabe und Turnierregeln
+## Modellvertrag
 
-Eine Policy steuert einen Pong-Schläger ausschließlich aus der gelieferten
-Bildfolge. Sie soll den Ball am eigenen Schläger abfangen und am gegnerischen
-vorbeispielen. Erreicht der Ball eine Seite, erhält der erfolgreiche Spieler
-einen Punkt; die Runde endet sofort und das nächste Spiel beginnt.
+Der Runner akzeptiert genau zwei Eingaben mit genau diesen Namen und eine
+Ausgabe mit genau diesem Namen:
 
-Ein Duell besteht aus **zehn Runden**. In ungeraden Runden ist Spieler 1
-links/orange und Spieler 2 rechts/grün; in geraden Runden werden die Seiten
-getauscht. Damit spielt jedes Team fünfmal auf jeder Seite.
+```text
+image:     float32 [1, 12, 210, 160]
+player_id: int64   [1]
+action:    int64   [1]    # Wert aus {0, 1, 2, 3, 4, 5}
+```
 
-Ein Ballwechsel darf höchstens **2.000 Schritte** dauern. Falls bis dahin kein
-Punkt erzielt wurde, endet die Runde unentschieden und beide Spieler erhalten
-einen Punkt. Auch eine technisch beendete Runde ohne Punkt wird als
-Unentschieden behandelt. Eine Partie kann im Browser pausiert, fortgesetzt
-oder gestoppt werden.
+Die Abgabe soll mit **ONNX Opset 17** exportiert werden und höchstens 250 MB
+groß sein. Sie wird mit ONNX Runtime auf CPU ausgeführt. Der Runner prüft beim
+Laden die Namen, Typen und festen Formen; er prüft das Opset nicht gesondert.
+Ein anderes Opset kann zwar zufällig ladbar sein, erfüllt aber nicht die
+Abgabevorgabe.
 
-## Beobachtungen
+### Beobachtung und Vorverarbeitung im Runner
 
-Bei jedem Schritt erhält das Modell die letzten **vier** Atari-Frames (vom
-ältesten zum neuesten) und die eigene Rolle. Es gibt keinen Zugriff auf das
-Environment, den Punktestand oder die gegnerischen Aktionen.
+PettingZoo liefert pro Spieler einen RGB-Frame der Form `210 × 160 × 3`
+(`H × W × RGB`, `uint8`). Der Runner hält pro physischem Pong-Spieler die
+letzten vier Frames fest:
 
-| Eingabe | Typ und Form | Bedeutung |
-| --- | --- | --- |
-| `image` | `float32`, `[1, 12, 210, 160]` | Vier RGB-Bilder im NCHW-Format: Kanäle 0–2 sind der älteste, 9–11 der neueste Frame. Pixelwerte sind auf `[0, 1]` normiert. |
-| `player_id` | `int64`, `[1]` | `1`: linker/oranger Schläger, `2`: rechter/grüner Schläger. |
+1. Beim Start einer Runde besteht die History aus vier identischen
+   Startframes.
+2. Danach wird nach jedem Environment-Schritt der neue Frame angehängt.
+3. Der Runner ordnet die vier Frames vom ältesten zum neuesten an, wandelt
+   `HWC` nach `NCHW` und stapelt sie zu zwölf Kanälen.
+4. Anschließend konvertiert er nach `float32` und dividiert durch `255`; die
+   Pixelwerte liegen somit in `[0, 1]`.
 
-Jeder Originalframe hat die Form `210 × 160 × 3` in H×B×RGB. Der Runner
-wandelt vier aufeinanderfolgende Frames in NCHW um und stapelt sie als zwölf
-Kanäle. Der Ball und beide Schläger sind sichtbar. Dadurch kann eine Policy
-aus der Ballbewegung die ungefähre Flugrichtung lernen. Beim Start einer Runde
-werden zunächst vier gleiche Startframes geliefert.
+Damit belegen die Kanäle `0–2` den ältesten und `9–11` den neuesten RGB-Frame.
+Die vier Frames erlauben es einer Policy, Bewegung aus der Bildfolge zu
+schätzen.
+
+`player_id` bezeichnet **die physische Seite**, nicht den Upload-Slot im
+Browser:
+
+| `player_id` | Seite und Farbe |
+| ---: | --- |
+| `1` | links / orange |
+| `2` | rechts / grün |
+
+Ein Modell muss daher beide Werte verarbeiten können, wenn es auf beiden
+Seiten spielen soll. Ein Modell darf `player_id` technisch nicht weglassen,
+auch wenn es die Eingabe intern nicht nutzt.
 
 ## Aktionen
 
-Das Modell gibt genau eine Atari-Aktion als `int64`-Tensor mit einem Element
-aus. In der dargestellten Pong-Arena bewegen die Aktionen 2 und 3 den
-Schläger zur oberen bzw. unteren Bildschirmkante:
+Die Werte entsprechen dem minimalen Action-Space von PettingZoo Pong. Die
+offiziellen Richtungsnamen beziehen sich auf den Atari-Controller und sind
+nicht als Bildschirmkoordinaten „oben/unten“ dokumentiert.
 
-| Wert | Aktion | Bedeutung |
-| ---: | --- | --- |
-| `0` | `NOOP` | Keine neue Eingabe. |
-| `1` | `FIRE` | Aufschlag auslösen. |
-| `2` | `UP` | Schläger nach oben bewegen. |
-| `3` | `DOWN` | Schläger nach unten bewegen. |
-| `4` | `FIRE_UP` | Aufschlag und nach oben bewegen. |
-| `5` | `FIRE_DOWN` | Aufschlag und nach unten bewegen. |
+| Wert | PettingZoo-/ALE-Bedeutung |
+| ---: | --- |
+| `0` | `NOOP` – keine Eingabe |
+| `1` | `FIRE` – feuern bzw. Aufschlag starten |
+| `2` | `RIGHT` – nach rechts bewegen |
+| `3` | `LEFT` – nach links bewegen |
+| `4` | `FIRE_RIGHT` – feuern und nach rechts bewegen |
+| `5` | `FIRE_LEFT` – feuern und nach links bewegen |
 
-Der Aufschlag-Timer von Pong verhindert zusätzlich, dass ein Spieler durch
-Nichtstun dauerhaft blockiert. Ausgaben außerhalb von `0` bis `5`, falsche
-Datentypen oder mehrere Werte werden abgewiesen.
+Insbesondere bedeutet `3` **nicht** `DOWN`, und `4`/`5` sind nicht
+`FIRE_UP`/`FIRE_DOWN`. Bei einem stillstehenden Ball kann `FIRE` den nächsten
+Ballwechsel auslösen; der Pong-Aufschlag ist zeitbegrenzt.
 
-## Abgabeformat
+## Turnierablauf im Browser-Runner
 
-Reicht genau **eine** `.onnx`-Datei ein, höchstens 250 MB groß. Sie muss mit
-ONNX-Opset 17 exportiert sein und exakt diese Schnittstelle haben:
+Ein Duell besteht aus zehn Runden. Die Seeds und die Seiten sind im aktuellen
+Runner festgelegt und damit reproduzierbar:
 
-```text
-image:      float32 [1, 12, 210, 160]  (4 RGB-Frames, ältester zuerst)
-player_id:  int64 [1]
-action:     int64 [1], Wert aus {0, 1, 2, 3, 4, 5}
-```
+| Runde | Seed | Upload „Spieler 1“ | Upload „Spieler 2“ |
+| ---: | ---: | --- | --- |
+| 1, 3, 5, 7, 9 | 42, 44, 46, 48, 50 | links / orange (`player_id=1`) | rechts / grün (`player_id=2`) |
+| 2, 4, 6, 8, 10 | 43, 45, 47, 49, 51 | rechts / grün (`player_id=2`) | links / orange (`player_id=1`) |
 
-Die Bewertung verwendet ausschließlich ONNX Runtime auf CPU. Trainieren darf
-man auf Mac, Windows, Linux oder Google Colab; die Abgabedatei darf aber keine
-GPU voraussetzen.
+So spielt jedes hochgeladene Modell fünf Runden auf jeder Seite. Pro Runde
+gilt:
 
-```python
-torch.onnx.export(
-    policy.eval(), (image, player_id), "model.onnx",
-    input_names=["image", "player_id"], output_names=["action"],
-    opset_version=17,
-)
-```
+- Ein positiver Environment-Reward zählt als ein Punkt für das zugehörige
+  hochgeladene Modell; anschließend beginnt die nächste Runde.
+- Nach maximal **2.000** Environment-Schritten ohne positiven Punkt oder bei
+  einer technisch beendeten Runde ohne positiven Punkt ist die Runde ein
+  Unentschieden. Beide Uploads erhalten dann je einen Turnierpunkt.
+- Ein negativer Reward allein wird vom Runner nicht als eigener Turnierpunkt
+  verbucht.
+- Nach zehn Runden gewinnt der Upload mit mehr aggregierten Turnierpunkten;
+  Gleichstand bedeutet Unentschieden.
 
-Vor der Abgabe immer testen:
+Die Browser-Oberfläche zeigt den laufenden Punktestand und die aktuellen
+Seiten. Eine Partie lässt sich pausieren, fortsetzen oder stoppen. Beim Stoppen
+endet sie ohne nachträgliche Gewinnerbestimmung.
+
+## Abgabe, Prüfung und Kursleistung
+
+### Technische Modell-Abgabe
+
+Pro Gruppe ist **genau eine `.onnx`-Datei** einzureichen. Vor der Abgabe:
 
 ```bash
 python validate_submission.py model.onnx
 ```
 
-Nur eine Ausgabe mit `OK` ist turnierkompatibel.
+Der Validator lädt das Modell mit der CPU-Laufzeit, prüft Schnittstelle und
+Aktionsbereich mit leeren Testframes für beide Seiten. Er bewertet **nicht**
+die Spielstärke und prüft weder Dateigröße noch ONNX-Opset vollständig. Diese
+beiden Abgabevorgaben müssen zusätzlich eingehalten werden.
 
-## Baselines
+Eine zusätzliche Projekt-README kann hilfreich sein, wird vom Runner aber
+nicht verwendet. Der Bericht ist eine separate Kursleistung.
+
+### Bericht und Termine
+
+Die Endnote basiert auf einem Bericht von **5–8 Seiten**. Er soll mindestens
+behandeln:
+
+- Spielbeschreibung sowie State/Observation, Aktionen und Reward,
+- gewählten RL-Algorithmus und Trainingsaufbau,
+- Umgang mit zwei Spielern, unbekanntem Gegner und Seitenwechsel,
+- Evaluation der Spielstärke und deren Grenzen.
+
+Am **06.11.2026** ist der Vorbereitungstermin. Am **13.11.2026** stellen die
+Gruppen ihre Ergebnisse in **10 Minuten** vor; anschließend findet das
+Turnier statt.
+
+## Mitgelieferte Baselines und Trainingsbeispiele
+
+Erst die Baselines erzeugen:
 
 ```bash
 python create_baselines.py
 ```
 
-Dies erzeugt:
+| Datei | Zweck |
+| --- | --- |
+| `baselines/baseline_pong_static.onnx` | Absichtlich schwache Policy, die nur `FIRE` ausgibt; Upload-/Schnittstellentest. |
+| `baselines/baseline_pong_track_ball.onnx` | Deterministische bildbasierte Policy; erkennt Ball und eigenen Schläger über Pixel-Farben und steuert in Ballrichtung. Kein trainiertes Modell. |
 
-```text
-baselines/baseline_pong_static.onnx
-baselines/baseline_pong_track_ball.onnx
-```
+### DQN-Minimalbeispiel
 
-`baseline_pong_static.onnx` drückt nur `FIRE` und ist ein absichtlich schwacher
-Upload-Test. `baseline_pong_track_ball.onnx` erkennt Ball und eigenen Schläger
-über deren Farben und bewegt den Schläger zur Höhe des Balls. Es ist eine
-deterministische, bildbasierte Beispielpolicy und kein trainiertes Modell.
-
-## Minimalbeispiel: Vanilla DQN gegen die Ball-Tracking-Baseline
-
-`train_dqn_vanilla.py` ist die kompakte Startvorlage mit
-[Stable-Baselines3](https://stable-baselines3.readthedocs.io/). Sie verwendet
-ohne eigene Algorithmusänderungen Standard-`DQN` mit Standard-`CnnPolicy` und trainiert
-nur Spieler 1 (links/orange) gegen die feste
-`baseline_pong_track_ball.onnx`. Es reproduziert die üblichen Atari-DQN-
-Vorverarbeitungsschritte: Spielfeld-Ausschnitt, Graustufen, `84 × 84` und vier
-gestapelte Frames. Beim Export ist dieselbe Vorverarbeitung im ONNX-Modell
-enthalten.
-
-Pong liefert beim Punkt bereits den echten Lernreward `+1` (gewonnen) bzw.
-`-1` (verloren); ein Trainings-Timeout liefert `0`. Die Evaluation zählt die
-deterministische ONNX-Policy gegen denselben Gegner. Diese Gewinn-/Verlustzahl
-ist wichtiger als ein einzelner Loss-Wert.
+[`train_dqn_vanilla.py`](train_dqn_vanilla.py) trainiert Standard-DQN aus
+Stable-Baselines3 ausschließlich als linken/orangen Spieler (`player_id=1`)
+gegen die feste Ball-Tracking-Baseline. Es beschneidet das Spielfeld,
+verwendet Graustufen, `84 × 84` Pixel und vier Trainingsframes. Beim
+ONNX-Export ist die dazu passende Vorverarbeitung im Modell enthalten.
 
 ```bash
 python train_dqn_vanilla.py --timesteps 1000000 \
   --output baselines/baseline_pong_dqn.onnx
 ```
 
-Die Vorlage übernimmt die zentralen Schritte des
-[CleanRL-Atari-DQN-Beispiels](https://docs.cleanrl.dev/rl-algorithms/dqn/):
-Graustufen, 84×84 Pixel, vier Frames, Replay-Buffer, Target-Netz und
-Epsilon-Greedy-Exploration. CleanRL trainiert Atari Pong für **10 Millionen
-Entscheidungsschritte** (bei Frame-Skip 4 sind das 40 Millionen Rohframes).
-Für dieses einfachere Duell gegen eine feste Baseline ist 1 Million Schritte
-ein sinnvoller erster Colab-Lauf; 20.000 Schritte testen nur Installation und
-Export. Sichtbares Spielverhalten kann mehrere Millionen Schritte benötigen.
-Für einen längeren Lauf mit gestreckter Exploration siehe
-[SERVER_TRAINING.md](SERVER_TRAINING.md).
+Das Beispiel ist eine Startvorlage, keine Referenz für eine faire
+Turnierevaluation: Sein Trainings-Timeout beträgt 1.000 Schritte statt 2.000
+und es sieht nur einen festen Gegner sowie eine Seite. Checkpoints,
+langes GPU-Training und Fortsetzen sind in
+[SERVER_TRAINING.md](SERVER_TRAINING.md) beschrieben.
 
-Für einen längeren Linux-/NVIDIA-Serverlauf mit Checkpoints und Download gibt
-es die Anleitung [SERVER_TRAINING.md](SERVER_TRAINING.md).
+### PPO- und Double-DQN-Beispiele
 
-Das Skript exportiert standardmäßig nach jeweils 100.000 Schritten einen
-Checkpoint. Ein Testlauf prüft nur die Technik, nicht die Spielstärke:
+[`train_ppo.py`](train_ppo.py) trainiert eine gemeinsame Policy im Self-Play:
+In jedem Trainingsschritt entscheidet dasselbe Netz für beide PettingZoo-
+Spieler. Das exportierte ONNX-Modell erfüllt den öffentlichen Vertrag, nutzt
+aber nur den neuesten der vier Frames und ignoriert `player_id`; außerdem
+folgt sein Episodenende dem PettingZoo-Environment, nicht einer einzelnen
+Turnierrunde mit 2.000-Schritte-Limit. Es ist somit ein kompaktes
+Self-Play-Beispiel, keine exakte Turnier-Simulation.
 
-```bash
-python train_dqn_vanilla.py --timesteps 128 --output baselines/test_pong_dqn.onnx
-```
+[`train_ppo_sb3.py`](train_ppo_sb3.py) ist ein älteres, stärker angepasstes
+Double-DQN-Beispiel: ebenfalls nur links/orange gegen die Tracking-Baseline,
+mit einem 1.000-Schritte-Trainings-Timeout und eigener Evaluation. Es ist
+kompatibel mit dem ONNX-Vertrag, aber ebenfalls nicht mit dem vollständigen
+Turnierablauf gleichzusetzen.
 
-Für ein echtes Turniermodell sollte die Vorlage erweitert werden, damit auch
-die rechte/grüne Rolle lernt oder Selbstspiel verwendet wird. Die frühere,
-etwas stärker angepasste Double-DQN-Variante bleibt in `train_ppo_sb3.py`;
-`train_ppo.py` enthält eine PPO-Selbstspiel-Variante für Pong.
+Training kann CPU, Apple Silicon, Colab oder einen CUDA-Server verwenden.
+Eine GPU kann längere Läufe beschleunigen, ist aber weder für alle Gruppen
+noch für die Ausführung der Abgabe erforderlich. Das Colab-Notebook
+[`train_ppo_colab.ipynb`](train_ppo_colab.ipynb) ist eine weitere
+Startumgebung; die exportierte ONNX-Datei muss anschließend lokal validiert
+werden.
 
-## Training in Google Colab
+## Offene methodische Entscheidungen
 
-Das Notebook [train_ppo_colab.ipynb](train_ppo_colab.ipynb) kann direkt in
-Colab geöffnet werden: [In Google Colab starten](https://colab.research.google.com/github/georgmerz/rl-challenge/blob/main/train_ppo_colab.ipynb).
-Unter **Runtime → Change runtime type** möglichst eine T4-GPU auswählen und
-anschließend **Run all** ausführen. Das Notebook installiert die ROMs,
-trainiert und lädt die ONNX-Datei herunter.
+Folgende Entscheidungen sind absichtlich nicht durch den Runner festgelegt und
+sollten im Bericht begründet werden:
 
-Auf Apple Silicon verwendet das Skript automatisch MPS, in Colab CUDA und
-sonst CPU. CPU kann bei Bedarf erzwungen werden:
+- State-Design: vollständige Bilder, gestapelte Frames oder zulässige intern
+  aus Bildern abgeleitete Merkmale;
+- Reward Shaping beim Training;
+- feste Gegner, Self-Play oder ein Gegner-Pool;
+- Training für beide Seiten und der Umgang mit `player_id`;
+- faire Evaluation, etwa über mehrere Seeds, beide Seiten und mehrere Gegner.
 
-```bash
-python train_dqn_vanilla.py --device cpu --timesteps 1000000
-```
+Das Browser-Turnier deckt bereits zehn feste Runden und beide Seiten ab. Für
+eine belastbare Aussage über Spielstärke empfiehlt sich zusätzlich eine eigene
+Evaluation über mehr Seeds und unterschiedliche Gegner.
 
-## Kleinstes exportierbares Modell
+## Kleinstes gültiges Exportbeispiel
+
+Dieses Modell ist nur ein technischer Test und nicht spielstark:
 
 ```python
 import torch
@@ -191,7 +241,6 @@ import torch
 
 class Policy(torch.nn.Module):
     def forward(self, image: torch.Tensor, player_id: torch.Tensor) -> torch.Tensor:
-        # Schwacher, aber gültiger Aufschlag-Test.
         action = torch.ones((image.shape[0],), dtype=torch.int64, device=image.device)
         return action + player_id * 0 + image[:, 0, 0, 0].to(torch.int64) * 0
 
@@ -200,11 +249,14 @@ policy = Policy().eval()
 image = torch.zeros((1, 12, 210, 160), dtype=torch.float32)
 player_id = torch.ones((1,), dtype=torch.int64)
 torch.onnx.export(
-    policy, (image, player_id), "my_policy.onnx",
-    input_names=["image", "player_id"], output_names=["action"],
+    policy,
+    (image, player_id),
+    "my_policy.onnx",
+    input_names=["image", "player_id"],
+    output_names=["action"],
     opset_version=17,
 )
 ```
 
-Danach mit `python validate_submission.py my_policy.onnx` prüfen und im
-Browser hochladen.
+Danach `python validate_submission.py my_policy.onnx` ausführen und die Datei
+im Browser gegen ein zweites Testmodell spielen lassen.
