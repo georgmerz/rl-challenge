@@ -1,9 +1,10 @@
 # RL Challenge: Atari Pong
 
-In dieser Challenge entwickeln Gruppen eine Policy für **Atari Pong**. Im
-Turnier trifft sie auf einen zuvor nicht bekannten Gegner. Ihr verändert nicht
-die Spielumgebung, sondern trainiert eine Policy und reicht sie als portable
-ONNX-Datei ein.
+In dieser Challenge entwickelt ihr in **Zweiergruppen** eine Policy für
+**Atari Pong**. Im Turnier trifft sie auf einen zuvor nicht bekannten Gegner.
+Ihr verändert nicht die Spielumgebung, sondern trainiert eine Policy, reicht
+sie als portable ONNX-Datei ein und präsentiert Vorgehen und Ergebnisse in
+einem zehnminütigen Vortrag.
 
 ![Animierte Atari-Pong-Szene aus der PettingZoo-Dokumentation](https://pettingzoo.farama.org/_images/atari_pong.gif)
 
@@ -13,11 +14,24 @@ ONNX-Datei ein.
 
 | Was? | Vorgabe |
 | --- | --- |
+| Team | Zweiergruppe; beide Mitglieder stimmen Methode, Experimente und Vortrag gemeinsam ab. |
 | Technische Abgabe | Genau eine `.onnx`-Datei pro Gruppe, höchstens 250 MB, ONNX Opset 17. |
 | Lokaler Test | Zwei ONNX-Modelle im Browser gegeneinander spielen lassen. Das zweite Modell ist nur ein Testgegner, keine zweite Abgabe. |
 | Bericht | 5–8 Seiten als Grundlage der Endnote. |
 | Vorbereitung | 30.10.2026 (diesen Freitag). |
-| Präsentation und Turnier | 13.11.2026, Präsentation der Ergebnisse in 10 Minuten. |
+| Präsentation und Turnier | 13.11.2026; 10 Minuten pro Gruppe, beide Gruppenmitglieder beteiligen sich. |
+
+Der Ablauf der Challenge ist damit:
+
+```text
+Gemeinsamer technischer Einstieg
+        ↓
+Arbeit und Experimente in Zweiergruppen
+        ↓
+Bericht (5–8 Seiten) und fertige ONNX-Policy
+        ↓
+10-Minuten-Vortrag und Turnier
+```
 
 ## 1. Vorbereitung und gemeinsamer Durchlauf
 
@@ -308,7 +322,23 @@ Insbesondere bedeutet `3` **nicht** `DOWN`, und `4`/`5` sind nicht
 `FIRE_UP`/`FIRE_DOWN`. Bei einem stillstehenden Ball kann `FIRE` den nächsten
 Ballwechsel auslösen; der Pong-Aufschlag ist zeitbegrenzt.
 
-## 4. Training: eigene Methode wählen
+## 4. Projektarbeit in Zweiergruppen
+
+Nach dem gemeinsamen Durchlauf arbeitet ihr in Zweiergruppen. Beide Mitglieder
+sollen das gesamte System erklären können, auch wenn ihr einzelne Aufgaben
+untereinander aufteilt. Stimmt insbesondere gemeinsam ab:
+
+- welche Forschungsfrage oder Verbesserung ihr untersuchen wollt,
+- wie State, Vorverarbeitung, Reward und Algorithmus gestaltet werden,
+- gegen welche Gegner und auf welchen Seiten trainiert wird,
+- welche Experimente einen fairen Vergleich ermöglichen und
+- wer welche Ergebnisse im gemeinsamen Vortrag präsentiert.
+
+Haltet Entscheidungen und Versuchsergebnisse während der Arbeit gemeinsam
+fest. So entstehen Bericht und Vortrag aus euren Experimenten und müssen nicht
+erst am Ende rekonstruiert werden.
+
+### Training: eigene Methode wählen
 
 Die Trainingsprogramme sind Startpunkte. Sie definieren weder den einzigen
 zulässigen Algorithmus noch eine faire Evaluation im Turnier.
@@ -406,15 +436,76 @@ Gegnertypen enthalten. Befehle, Softwareversionen und wesentliche
 Hyperparameter sollten so dokumentiert sein, dass der Versuch reproduzierbar
 ist.
 
-## 6. Abgabe und Bericht
+## 6. Der 10-Minuten-Vortrag
 
-Pro Gruppe ist **genau eine `.onnx`-Datei** einzureichen. Eine zusätzliche
-Projekt-README kann hilfreich sein, wird vom Runner aber nicht verwendet. Der
-Bericht ist eine separate Kursleistung und bildet mit 5–8 Seiten die Grundlage
-der Endnote; die in Abschnitt 5 genannten Fragen bilden dafür den inhaltlichen
-Rahmen.
+Am **13.11.2026** präsentiert jede Zweiergruppe ihr Vorgehen und ihre
+Ergebnisse und nimmt anschließend am Turnier teil. Der Vortrag soll eine kurze,
+verständliche Fassung des Berichts sein – keine Führung durch den Quellcode.
+Beide Gruppenmitglieder übernehmen einen inhaltlichen Teil.
 
-Vor der Abgabe die ONNX-Datei validieren und lokal gegen einen Testgegner
-spielen lassen. Bei der Präsentation am **13.11.2026** stellt jede Gruppe ihr
-Vorgehen und ihre Ergebnisse in **10 Minuten** vor; der Vorbereitungstermin
-ist am **30.10.2026**.
+Eine mögliche Zeiteinteilung ist:
+
+| Zeit | Inhalt |
+| ---: | --- |
+| ca. 1 Minute | Aufgabe, Ziel und eigene Fragestellung |
+| ca. 3 Minuten | State/Vorverarbeitung, Algorithmus, Reward und Trainingsgegner |
+| ca. 4 Minuten | Evaluation, wichtigste Ergebnisse und Vergleich mit Baselines |
+| ca. 2 Minuten | Grenzen, überraschende Beobachtungen und Fazit |
+
+Eine Architekturabbildung, eine aussagekräftige Lernkurve und eine kompakte
+Ergebnistabelle sind meist hilfreicher als viele Folien mit Code. Aussagen wie
+„das Modell ist gut“ sollten durch eine nachvollziehbare Evaluation über
+Gegner, Seeds und beide Seiten belegt werden. Das Turniermodell sollte vor dem
+Termin als validierte ONNX-Datei bereitliegen; ein Live-Training ist nicht Teil
+des Vortrags.
+
+## 7. Abgabe, Bewertung und Notenschlüssel
+
+Pro Zweiergruppe werden benötigt:
+
+- **genau eine `.onnx`-Datei** mit höchstens 250 MB und ONNX Opset 17,
+- ein **Bericht mit 5–8 Seiten** und
+- ein **gemeinsamer Vortrag von 10 Minuten**.
+
+Eine zusätzliche Projekt-README kann hilfreich sein, wird vom Runner aber
+nicht verwendet. Vor der Abgabe muss die ONNX-Datei technisch validiert und
+lokal gegen einen Testgegner ausgeführt werden:
+
+```bash
+python validate_submission.py model.onnx
+```
+
+Der Validator prüft technische Kompatibilität, nicht die Spielstärke. Die
+Endnote basiert auf dem Bericht. Turnierplatzierung und absolute Spielstärke
+werden nicht direkt benotet; bewertet werden die Qualität der Methode, der
+Experimente und ihrer kritischen Auswertung.
+
+### Bewertung des Berichts
+
+| Kriterium | Punkte | Erwartung |
+| --- | ---: | --- |
+| Aufgabe und Modellvertrag | 15 | Spiel, State, Aktionen, Reward, `player_id` und ONNX-Schnittstelle korrekt und verständlich erklären. |
+| Methode und Begründung | 25 | Vorverarbeitung, Algorithmus, Architektur und gegebenenfalls Reward Shaping nachvollziehbar auswählen und begründen. |
+| Training und Versuchsaufbau | 20 | Gegnerwahl, beide Seiten, Hyperparameter, Trainingsdauer und Checkpoint-Auswahl transparent dokumentieren. |
+| Evaluation und kritische Diskussion | 30 | Sinnvolle Baselines, Seeds, Kennzahlen und Vergleiche verwenden; Ergebnisse, Grenzen und Fehlerfälle fundiert interpretieren. |
+| Darstellung und Reproduzierbarkeit | 10 | Klar strukturieren, Abbildungen beschriften sowie Befehle, Versionen und Hardware ausreichend dokumentieren. |
+| **Summe** | **100** | |
+
+### Notenschlüssel
+
+| Punkte | Note |
+| ---: | :--- |
+| 95–100 | 1,0 |
+| 90–94 | 1,3 |
+| 85–89 | 1,7 |
+| 80–84 | 2,0 |
+| 75–79 | 2,3 |
+| 70–74 | 2,7 |
+| 65–69 | 3,0 |
+| 60–64 | 3,3 |
+| 55–59 | 3,7 |
+| 50–54 | 4,0 |
+| 0–49 | 5,0 |
+
+Der Vorbereitungstermin ist am **30.10.2026**. Präsentation und Turnier finden
+am **13.11.2026** statt.
