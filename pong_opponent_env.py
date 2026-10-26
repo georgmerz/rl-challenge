@@ -11,8 +11,11 @@ from pathlib import Path
 
 import gymnasium as gym
 import numpy as np
+import torch
 from gymnasium import spaces
 from pettingzoo.atari import pong_v3
+from torch import nn
+from torch.nn import functional as F
 
 from app import ModelAgent
 
@@ -30,13 +33,33 @@ def public_image(frames: np.ndarray) -> np.ndarray:
     return np.ascontiguousarray(image, dtype=np.float32) / 255.0
 
 
+class PongPreprocessor(nn.Module):
+    """Komprimiert den öffentlichen State für DQN auf fünf kleine Kanäle.
+
+    Vier Kanäle enthalten die zugeschnittenen 84x84-Graustufenbilder. Der
+    fünfte Kanal enthält 0 für links und 255 für rechts. Die Ausgabe bleibt
+    absichtlich im Wertebereich 0..255, damit Stable-Baselines3 sie wie ein
+    übliches Atari-Bild speichert und erst vor dem CNN auf 0..1 normiert.
+    """
+
+    def forward(self, image: torch.Tensor, player_id: torch.Tensor) -> torch.Tensor:
+        batch_size = image.shape[0]
+        rgb = image.reshape(batch_size, FRAME_STACK, 3, 210, 160)[:, :, :, 34:194, :]
+        gray = 0.299 * rgb[:, :, 0] + 0.587 * rgb[:, :, 1] + 0.114 * rgb[:, :, 2]
+        gray = F.interpolate(gray, size=(84, 84), mode="bilinear", align_corners=False) * 255.0
+        side = (player_id - 1).to(image.dtype).reshape(-1, 1, 1, 1) * 255.0
+        side = side.expand(-1, 1, 84, 84)
+        return torch.cat((gray, side), dim=1)
+
+
 class PongVsOnnxEnv(gym.Env):
     """Trainiert eine Seite von Pong gegen ein wählbares ONNX-Gegnermodell.
 
     ``player_id=1`` trainiert links/orange, ``player_id=2`` rechts/grün.
     Mit ``player_id=None`` wechselt die trainierte Seite pro Episode. Die
-    Beobachtung hat intern 13 Kanäle: zwölf öffentliche Bildkanäle und einen
-    zusätzlichen konstanten Seitenkanal (0 für links, 1 für rechts).
+    Beobachtung hat intern fünf kleine ``uint8``-Kanäle: vier vorverarbeitete
+    Bilder und einen Seitenkanal. Der öffentliche ONNX-Vertrag bleibt davon
+    unberührt.
     """
 
     metadata = {"render_modes": []}
@@ -57,10 +80,11 @@ class PongVsOnnxEnv(gym.Env):
         # auf. Der Gegner sieht damit exakt die Turnier-Eingabe, nicht den
         # zusätzlichen Trainingskanal weiter unten.
         self.opponent = ModelAgent(Path(opponent_model))
+        self.preprocessor = PongPreprocessor().eval()
         self.training_player_id = player_id
         self.current_player_id: int | None = None
         self.max_episode_steps = max_episode_steps
-        self.observation_space = spaces.Box(0.0, 1.0, shape=(13, 210, 160), dtype=np.float32)
+        self.observation_space = spaces.Box(0, 255, shape=(5, 84, 84), dtype=np.uint8)
         self.action_space = spaces.Discrete(6)
         self.controlled_player: str | None = None
         self.opponent_player: str | None = None
@@ -71,13 +95,11 @@ class PongVsOnnxEnv(gym.Env):
     def _observation(self) -> np.ndarray:
         if self.frames is None or self.controlled_player is None or self.current_player_id is None:
             raise RuntimeError("reset() muss vor der Beobachtung aufgerufen werden.")
-        # Die ersten zwölf Kanäle sind exakt das öffentliche Runner-Bild.
-        image = public_image(np.stack(self.frames[self.controlled_player]))
-        # Nur beim Training ergänzen wir die Seite als dreizehnten Kanal.
-        # Ein voller Kanal hält die Beobachtung im üblichen Bildformat; das
-        # CNN liest später nur einen Wert daraus, weil er überall identisch ist.
-        side_channel = np.full((1, 210, 160), self.current_player_id - 1, dtype=np.float32)
-        return np.concatenate((image, side_channel), axis=0)
+        image = torch.from_numpy(public_image(np.stack(self.frames[self.controlled_player]))).unsqueeze(0)
+        player_id = torch.tensor([self.current_player_id], dtype=torch.int64)
+        with torch.no_grad():
+            observation = self.preprocessor(image, player_id)[0].round().clamp(0, 255).to(torch.uint8)
+        return observation.numpy()
 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
@@ -119,7 +141,7 @@ class PongVsOnnxEnv(gym.Env):
         terminated = point_scored or naturally_finished
         reward = float(rewards.get(self.controlled_player, 0.0))
         if terminated or truncated:
-            observation = np.zeros(self.observation_space.shape, dtype=np.float32)
+            observation = np.zeros(self.observation_space.shape, dtype=np.uint8)
         else:
             observation = self._observation()
         return observation, reward, terminated, truncated, {}

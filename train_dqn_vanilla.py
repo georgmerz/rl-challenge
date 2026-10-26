@@ -19,9 +19,8 @@ from stable_baselines3 import DQN
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor, NatureCNN
 from torch import nn
-from torch.nn import functional as F
 
-from pong_opponent_env import FRAME_STACK, PongVsOnnxEnv
+from pong_opponent_env import FRAME_STACK, PongPreprocessor, PongVsOnnxEnv
 
 
 # Diese Optionen sind die wenigen Einstellungen, die man für einen ersten
@@ -60,18 +59,21 @@ def main() -> None:
     try:
         # 2. Standard-DQN erstellen. Die festen Werte sind übliche Atari-
         #    Startwerte und kein Teil der Challenge-Regeln.
+        # Der Buffer wächst bei kurzen Smoke-Tests nicht unnötig. Bei langen
+        # Läufen bleibt er auf 10.000 komprimierte Beobachtungen begrenzt.
+        buffer_size = min(10_000, max(256, args.timesteps))
         model = DQN(
             "CnnPolicy",
             env,
             learning_rate=1e-4,
-            buffer_size=100_000,
-            learning_starts=80_000,
+            buffer_size=buffer_size,
+            learning_starts=5_000,
             batch_size=32,
             train_freq=4,
             target_update_interval=1_000,
             exploration_fraction=0.4,
             exploration_final_eps=0.01,
-            policy_kwargs={"features_extractor_class": PongCNN, "normalize_images": False},
+            policy_kwargs={"features_extractor_class": PongCNN},
             verbose=1,
             seed=42,
             device=args.device,
@@ -95,7 +97,7 @@ def main() -> None:
 
 
 class PongCNN(BaseFeaturesExtractor):
-    """Bildvorverarbeitung plus ein tatsächliches Seitenmerkmal für das Q-Netz."""
+    """Kleines Q-Netz für vier Graustufenbilder plus ein Seitenmerkmal."""
 
     def __init__(self, observation_space: spaces.Box, features_dim: int = 512, normalized_image: bool = True) -> None:
         # NatureCNN liefert 512 Bildmerkmale; das 513. Merkmal ist die Seite.
@@ -104,37 +106,28 @@ class PongCNN(BaseFeaturesExtractor):
         self.cnn = NatureCNN(processed_space, features_dim=features_dim, normalized_image=normalized_image)
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
-        # Internes Trainingsformat: [B, 13, 210, 160]. Die Kanäle 0..11
-        # enthalten vier RGB-Frames, Kanal 12 kodiert die Spielerseite.
-        batch_size = image.shape[0]
-        rgb = image[:, :12].reshape(batch_size, FRAME_STACK, 3, 210, 160)[:, :, :, 34:194, :]
-        # Vom Originalbild bleibt nur das Spielfeld. Anschließend folgen
-        # Graustufen und 84x84 Skalierung wie bei klassischen Atari-DQNs.
-        gray = 0.299 * rgb[:, :, 0] + 0.587 * rgb[:, :, 1] + 0.114 * rgb[:, :, 2]
-        visual_features = self.cnn(F.interpolate(gray, size=(84, 84), mode="bilinear", align_corners=False))
-        # Das Q-Netz bekommt 512 Bildmerkmale PLUS dieses eine Seitenmerkmal.
-        side_feature = image[:, 12, 0, 0].unsqueeze(1)
+        # Stable-Baselines3 hat die gespeicherten uint8-Werte hier bereits auf
+        # 0..1 normiert. Kanal 0..3 sind Bilder, Kanal 4 ist die Seite.
+        visual_features = self.cnn(image[:, :FRAME_STACK])
+        side_feature = image[:, FRAME_STACK, 0, 0].unsqueeze(1)
         return torch.cat((visual_features, side_feature), dim=1)
 
 
 class OnnxPolicy(nn.Module):
     """Übersetzt den öffentlichen ONNX-Vertrag in das interne DQN-Format.
 
-    Außen: image mit 12 Kanälen und player_id aus dem Runner.
-    Innen: image mit 13 Kanälen, weil DQN ein Seitenmerkmal mitlernt.
+    Außen: vier RGB-Frames und player_id aus dem Runner.
+    Innen: vier kleine Graustufenbilder und ein Seitenkanal wie im Training.
     """
 
     def __init__(self, q_net: nn.Module) -> None:
         super().__init__()
+        self.preprocessor = PongPreprocessor()
         self.q_net = copy.deepcopy(q_net).cpu()
 
     def forward(self, image: torch.Tensor, player_id: torch.Tensor) -> torch.Tensor:
-        # Der Runner liefert 1 für links und 2 für rechts. Das Training kennt
-        # dagegen 0 bzw. 1. Der so erzeugte Kanal macht player_id zu einer
-        # echten, entscheidungsrelevanten Eingabe des Q-Netzes.
-        side_channel = (player_id - 1).to(image.dtype).reshape(-1, 1, 1, 1)
-        side_channel = side_channel.expand(-1, 1, 210, 160)
-        network_input = torch.cat((image, side_channel), dim=1)
+        # Dasselbe Modul erzeugt beim Export exakt die Trainingsbeobachtung.
+        network_input = self.preprocessor(image, player_id)
         # DQN liefert sechs Q-Werte. argmax wählt die beste Atari-Aktion 0..5.
         return torch.argmax(self.q_net(network_input), dim=1).to(torch.int64)
 
@@ -142,8 +135,8 @@ class OnnxPolicy(nn.Module):
 def export_onnx(model: DQN, output: Path) -> None:
     """Exportiert die gelernte greedy Policy im festen Browser-Format.
 
-    Die Beispieltensoren beschreiben den öffentlichen Vertrag, nicht das
-    13-Kanal-Trainingsformat. OnnxPolicy ergänzt den dreizehnten Kanal selbst.
+    Die Beispieltensoren beschreiben den öffentlichen Vertrag. OnnxPolicy
+    bettet die im Training verwendete Vorverarbeitung in die ONNX-Datei ein.
     """
     output.parent.mkdir(parents=True, exist_ok=True)
     policy = OnnxPolicy(model.policy.q_net).eval()
@@ -177,6 +170,9 @@ class CheckpointCallback(BaseCallback):
             export_onnx(self.model, checkpoint.with_suffix(".onnx"))
             print(f"Checkpoint nach {self.num_timesteps} Schritten: {checkpoint}.zip und .onnx")
             self.next_checkpoint += self.every_steps
+        # Stable-Baselines3 beendet das Training, sobald ein Callback nicht
+        # True zurückgibt. Deshalb muss auch zwischen Checkpoints True folgen.
+        return True
 
 
 if __name__ == "__main__":

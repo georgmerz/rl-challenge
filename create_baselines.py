@@ -16,8 +16,10 @@ IMAGE_SHAPE = (1, 12, 210, 160)
 
 NOOP = 0
 FIRE = 1
-UP = 2
-DOWN = 3
+# PettingZoo nennt 2/3 offiziell RIGHT/LEFT. In der gedrehten Pong-
+# Darstellung bewegen diese Controller-Richtungen den Schläger auf/ab.
+PADDLE_UP = 2
+PADDLE_DOWN = 3
 
 
 class PongStaticPolicy(torch.nn.Module):
@@ -61,8 +63,8 @@ class PongTrackBallPolicy(torch.nn.Module):
         paddle_count = player_pixels.sum(dim=(1, 2)).clamp_min(1.0)
         paddle_y = (player_pixels * y).sum(dim=(1, 2)) / paddle_count
 
-        move_up = torch.full_like(player_id, UP)
-        move_down = torch.full_like(player_id, DOWN)
+        move_up = torch.full_like(player_id, PADDLE_UP)
+        move_down = torch.full_like(player_id, PADDLE_DOWN)
         noop = torch.full_like(player_id, NOOP)
         fire = torch.full_like(player_id, FIRE)
         tracking_action = torch.where(

@@ -19,10 +19,19 @@ ONNX-Datei ein.
 | Vorbereitung | 30.10.2026 (diesen Freitag). |
 | Präsentation und Turnier | 13.11.2026, Präsentation der Ergebnisse in 10 Minuten. |
 
-## 1. Schnellstart: Runner und Baselines testen
+## 1. Vorbereitung und gemeinsamer Durchlauf
 
-Der lokale Runner führt die Turnierumgebung auf eurem Rechner aus. Er verwendet
-ONNX Runtime auf CPU; zum **Ausführen** einer Abgabe ist keine GPU nötig.
+Ziel des gemeinsamen Durchlaufs ist, dass jede Person einmal die vollständige
+Kette ausführt:
+
+```text
+Baseline erzeugen → ONNX validieren → Duell starten → DQN kurz ausführen → eigenen Export testen
+```
+
+### Einmalige Vorbereitung
+
+Empfohlen ist **Python 3.11**. Der lokale Runner verwendet ONNX Runtime auf
+CPU; zum Ausführen einer Abgabe ist keine GPU nötig.
 
 ```bash
 cd rl-challenge
@@ -30,20 +39,88 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 AutoROM --accept-license
+```
+
+Unter Windows wird die virtuelle Umgebung mit
+`.venv\Scripts\Activate.ps1` aktiviert. Dieser kurze Test prüft zusätzlich,
+ob die Pong-ROM gefunden wird:
+
+```bash
+python -c "from pettingzoo.atari import pong_v3; env = pong_v3.parallel_env(); env.reset(seed=42); env.close(); print('Setup und Pong-ROM: OK')"
+```
+
+### Gemeinsam in der Vorlesung
+
+#### 1. Zwei einfache Policies erzeugen und validieren
+
+```bash
 python create_baselines.py
+python validate_submission.py baselines/baseline_pong_static.onnx
+python validate_submission.py baselines/baseline_pong_track_ball.onnx
+```
+
+Beide Validator-Aufrufe müssen mit `OK` enden. Dabei wird bereits der zentrale
+Unterschied sichtbar: Ein Modell kann technisch korrekt und trotzdem
+spielerisch schwach sein.
+
+#### 2. Ein Duell im Browser ausführen
+
+```bash
 PORT=5001 python app.py
 ```
 
-Anschließend [http://127.0.0.1:5001](http://127.0.0.1:5001) öffnen. Unter
-Windows wird die virtuelle Umgebung mit `.venv\Scripts\Activate.ps1`
-aktiviert.
-
-Zum ersten Test im Browser diese beiden Dateien auswählen:
+Unter Windows PowerShell lautet derselbe Startbefehl
+`$env:PORT=5001; python app.py`.
+Anschließend [http://127.0.0.1:5001](http://127.0.0.1:5001) öffnen und diese
+Modelle auswählen:
 
 | Datei | Zweck |
 | --- | --- |
 | `baselines/baseline_pong_static.onnx` | Absichtlich schwache Policy, die nur `FIRE` ausgibt; Upload-/Schnittstellentest. |
 | `baselines/baseline_pong_track_ball.onnx` | Deterministische bildbasierte Policy: Sie erkennt Ball und eigenen Schläger über Pixel-Farben und steuert in Ballrichtung. Kein trainiertes Modell. |
+
+Gemeinsam sollten einmal **Start**, **Pause**, **Fortsetzen** und **Stop**
+ausprobiert sowie Seitenwechsel und Punktestand beobachtet werden.
+
+#### 3. Den Trainings- und Exportweg einmal vollständig ausführen
+
+In einem zweiten Terminal die virtuelle Umgebung aktivieren und einen sehr
+kurzen Lauf starten:
+
+```bash
+python train_dqn_vanilla.py --timesteps 128 --export-every 128 \
+  --output baselines/lecture_smoke.onnx
+python validate_submission.py baselines/lecture_smoke.onnx
+```
+
+Dieser Lauf testet Environment, DQN und ONNX-Export, trainiert aber noch keine
+sinnvolle Policy: Das Beispiel beginnt erst nach 5.000 Schritten mit Updates.
+Anschließend kann `lecture_smoke.onnx` im Browser gegen eine Baseline geladen
+werden. Damit hat jede Person den späteren eigenen
+Abgabeweg einmal vollständig durchlaufen.
+
+Nach diesem Durchlauf sollten alle Teilnehmenden:
+
+- eine technisch gültige ONNX-Policy erzeugen und validieren können,
+- den Unterschied zwischen technischer Gültigkeit und Spielstärke erklären,
+- `image`, `player_id` und `action` im Modellvertrag zuordnen können und
+- wissen, wo Turnierregeln, Trainingsumgebung und eigenes Modell getrennt
+  implementiert sind.
+
+### Empfohlene Reihenfolge beim Lesen des Codes
+
+| Datei | Leitfrage |
+| --- | --- |
+| [`create_baselines.py`](create_baselines.py) | Wie wird aus einer einfachen Policy eine ONNX-Datei? |
+| [`validate_submission.py`](validate_submission.py) | Was prüft technische Kompatibilität — und was nicht? |
+| [`app.py`](app.py) | Wie ruft der Runner zwei Modelle auf und wertet ein Duell aus? |
+| [`pong_opponent_env.py`](pong_opponent_env.py) | Wie wird die Zwei-Spieler-Arena für ein Einzelagenten-DQN adaptiert? |
+| [`train_dqn_vanilla.py`](train_dqn_vanilla.py) | Wie greifen Vorverarbeitung, DQN, Checkpoints und Export ineinander? |
+
+Wenn ein Schritt scheitert, zuerst prüfen: Ist die virtuelle Umgebung aktiv?
+Wurde `requirements.txt` installiert? Wurde `AutoROM --accept-license`
+ausgeführt? Ist Port 5001 belegt, kann stattdessen etwa `PORT=5002` verwendet
+werden.
 
 ## 2. Aufgabe und Turnierablauf
 
@@ -212,9 +289,11 @@ auch wenn es die Eingabe intern nicht nutzt.
 
 ### Aktionen
 
-Die Werte entsprechen dem minimalen Action-Space von PettingZoo Pong. Die
-offiziellen Richtungsnamen beziehen sich auf den Atari-Controller und sind
-nicht als Bildschirmkoordinaten „oben/unten“ dokumentiert.
+Die Werte entsprechen dem
+[minimalen Action-Space von PettingZoo Pong](https://pettingzoo.farama.org/main/environments/atari/pong/#action-space-minimal).
+Die offiziellen Richtungsnamen beziehen sich auf den Atari-Controller. In der
+gedrehten Darstellung bewegen `RIGHT` und `LEFT` den Schläger auf dem Bildschirm
+nach oben beziehungsweise unten; die Aktionsnummern bleiben dennoch 2 und 3.
 
 | Wert | PettingZoo-/ALE-Bedeutung |
 | ---: | --- |
@@ -254,16 +333,18 @@ So arbeitet das Beispiel:
 1. `PongVsOnnxEnv` trainiert pro Episode eine Seite und lässt die andere
    Seite mit dem ONNX-Gegner spielen. `--player-id 0` (Standard) wechselt die
    trainierte Seite; `1` und `2` erzwingen links bzw. rechts.
-2. Das DQN erhält vier RGB-Frames. Intern wird die Seite als zusätzliches
-   Merkmal ergänzt; beim Export erzeugt `OnnxPolicy` dieses Merkmal wieder aus
-   der öffentlichen `player_id`.
+2. `PongPreprocessor` schneidet das Spielfeld aus und komprimiert die vier
+   RGB-Frames auf vier Graustufenbilder mit `84 × 84` Pixeln. Ein fünfter Kanal
+   kodiert die Seite. Dasselbe Modul wird in die exportierte ONNX-Policy
+   eingebettet. So bleibt der Replay-Buffer klein und der öffentliche
+   Modellvertrag dennoch unverändert.
 3. DQN lernt aus dem unveränderten Pong-Reward und schreibt alle
    `--export-every` Schritte ein `.zip`-Checkpoint sowie eine `.onnx`-Datei.
 
 Der 1.000-Schritte-Timeout und der feste Gegner gelten nur für dieses
 Trainingsbeispiel, nicht für das Turnier. Ein kurzer Pipeline-Test kann schon
-eine technisch gültige Datei erzeugen, lernt wegen der ersten 80.000
-Explorationsschritte aber noch keine sinnvolle Policy:
+eine technisch gültige Datei erzeugen, beginnt wegen der ersten 5.000
+Sammelschritte aber noch nicht mit den DQN-Updates:
 
 ```bash
 python train_dqn_vanilla.py --timesteps 1000 --export-every 500 \
@@ -280,32 +361,58 @@ CUDA verwenden; eine GPU beschleunigt längere Läufe, ist aber nicht nötig.
 
 ## 5. Was sollten Sie im Bericht diskutieren?
 
-Begründen Sie die wichtigsten Entwurfsentscheidungen Ihres Ansatzes. Der
-Runner gibt diese Punkte nicht vor; sie sind deshalb besonders geeignet, um
-Ihre Methode und deren Grenzen nachvollziehbar zu machen:
+Der Bericht soll nicht nur den fertigen Code beschreiben, sondern eine
+nachvollziehbare **experimentelle Geschichte** erzählen: Welche Entscheidung
+wurde aus welchem Grund getroffen, wie wurde sie geprüft und was folgt aus den
+Ergebnissen? Für 5–8 Seiten bietet sich folgende Struktur an.
 
-- State-Design: vollständige Bilder, gestapelte Frames oder zulässige intern
-  aus Bildern abgeleitete Merkmale;
-- Reward Shaping beim Training;
-- feste Gegner, Self-Play oder ein Gegner-Pool;
-- Training für beide Seiten und der Umgang mit `player_id`;
-- faire Evaluation, etwa über mehrere Seeds, beide Seiten und mehrere Gegner.
+### Aufgabe, State und Aktionen
 
-Das Browser-Turnier deckt bereits zehn feste Runden und beide Seiten ab. Für
-eine belastbare Aussage über Spielstärke empfiehlt sich zusätzlich eine eigene
-Evaluation über mehr Seeds und unterschiedliche Gegner.
+- Wie funktionieren Pong, Ballwechsel, Punkte und Reward? Welche Information
+  erhält die Policy und welche ausdrücklich nicht?
+- Warum wurden vier RGB-Frames direkt verwendet oder intern weiter
+  vorverarbeitet? Welche Bewegungsinformation lässt sich daraus gewinnen?
+- Wie werden die sechs Aktionen, der Environment-Reward und `player_id`
+  interpretiert?
+
+### Methode und Training
+
+- Welcher RL-Algorithmus und welche Modellarchitektur wurden gewählt – und
+  warum passen sie zur Aufgabe?
+- Wurde der originale Reward verwendet oder Reward Shaping eingesetzt? Welche
+  erwünschten und unerwünschten Anreize entstehen dadurch?
+- Wurde gegen feste Gegner, Self-Play oder einen Gegner-Pool trainiert?
+- Wie wurde sichergestellt, dass die Policy beide Seiten beherrscht und nicht
+  nur einen bekannten Gegner oder wenige Seeds auswendig lernt?
+- Welche Trainingsdauer, Hyperparameter, Hardware und Kriterien zur Auswahl
+  eines Checkpoints wurden verwendet?
+
+### Evaluation und Ergebnisse
+
+- Gegen welche Baselines und Modelle wurde **ohne weiteres Lernen** evaluiert?
+- Wurden mehrere Seeds, beide Seiten und genügend Ballwechsel betrachtet?
+- Welche Kennzahlen beantworten die Frage nach Spielstärke sinnvoll, zum
+  Beispiel Siege/Niederlagen/Unentschieden, Punkteverhältnis und Streuung?
+- Was zeigen Lernkurven, Tabellen oder Videos? Eine kleine Zahl gut erklärter
+  Ergebnisse ist wertvoller als viele unkommentierte Ausgaben.
+- Welche Fehlerfälle, Grenzen und überraschenden Verhaltensweisen wurden
+  beobachtet? Was wäre der nächste sinnvolle Verbesserungsversuch?
+
+Trainingsergebnisse und Evaluation sollten klar getrennt werden. Das
+Browser-Turnier mit zehn festen Runden ist ein gemeinsamer Abschlusstest, aber
+allein noch keine belastbare Messung allgemeiner Spielstärke. Die eigene
+Evaluation sollte deshalb weitere Seeds, beide Seiten und möglichst mehrere
+Gegnertypen enthalten. Befehle, Softwareversionen und wesentliche
+Hyperparameter sollten so dokumentiert sein, dass der Versuch reproduzierbar
+ist.
 
 ## 6. Abgabe und Bericht
 
 Pro Gruppe ist **genau eine `.onnx`-Datei** einzureichen. Eine zusätzliche
 Projekt-README kann hilfreich sein, wird vom Runner aber nicht verwendet. Der
 Bericht ist eine separate Kursleistung und bildet mit 5–8 Seiten die Grundlage
-der Endnote. Er soll mindestens behandeln:
-
-- Spielbeschreibung sowie State/Observation, Aktionen und Reward,
-- gewählten RL-Algorithmus und Trainingsaufbau,
-- Umgang mit zwei Spielern, unbekanntem Gegner und Seitenwechsel,
-- Evaluation der Spielstärke und deren Grenzen.
+der Endnote; die in Abschnitt 5 genannten Fragen bilden dafür den inhaltlichen
+Rahmen.
 
 Vor der Abgabe die ONNX-Datei validieren und lokal gegen einen Testgegner
 spielen lassen. Bei der Präsentation am **13.11.2026** stellt jede Gruppe ihr
