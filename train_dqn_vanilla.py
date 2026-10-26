@@ -24,6 +24,14 @@ from torch.nn import functional as F
 
 from train_ppo_sb3 import FRAME_STACK, Player1VsPongBaselineEnv, PlayingFieldObservation, StackFramesAsChannels
 
+# These are deliberately fixed so that the usual student command only needs
+# --timesteps and --output. They are ordinary Atari-DQN defaults, not rules of
+# the challenge; changing them is an optional experiment.
+LEARNING_RATE = 1e-4
+REPLAY_BUFFER_SIZE = 100_000
+RANDOM_START_STEPS = 80_000
+FINAL_EXPLORATION_RATE = 0.01
+
 
 class ExportedPolicy(nn.Module):
     """Add the training preprocessing to the fixed public ONNX interface."""
@@ -91,33 +99,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timesteps", type=int, default=1_000_000, help="Training steps (default: 1000000).")
     parser.add_argument("--output", default="baselines/baseline_pong_dqn.onnx", help="Exported ONNX path.")
     parser.add_argument("--device", default="auto", help="SB3 device, e.g. auto, cuda, mps or cpu.")
-    parser.add_argument("--buffer-size", type=int, default=100_000, help="Replay-buffer size (default: 100000).")
-    parser.add_argument("--learning-starts", type=int, default=80_000, help="Random steps before updates (default: 80000).")
-    parser.add_argument(
+    advanced = parser.add_argument_group("optional settings for long runs")
+    advanced.add_argument(
         "--exploration-fraction",
         type=float,
         default=0.10,
-        help="Share of the complete run over which epsilon falls from 1.0 to --exploration-final-eps (default: 0.10).",
+        help="Share of the run over which epsilon falls from 1.0 to 0.01 (default: 0.10).",
     )
-    parser.add_argument(
-        "--exploration-final-eps",
-        type=float,
-        default=0.01,
-        help="Final probability of a random action after epsilon decay (default: 0.01).",
-    )
-    parser.add_argument("--export-every", type=int, default=100_000, help="Checkpoint interval in steps (default: 100000).")
-    parser.add_argument("--resume", type=Path, help="Optional .zip checkpoint to continue; --timesteps are added training steps.")
+    advanced.add_argument("--export-every", type=int, default=100_000, help="Checkpoint interval in steps (default: 100000).")
+    advanced.add_argument("--resume", type=Path, help="Optional .zip checkpoint to continue; --timesteps are added training steps.")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    if min(args.timesteps, args.buffer_size, args.learning_starts, args.export_every) <= 0:
-        raise ValueError("--timesteps, --buffer-size, --learning-starts und --export-every müssen positiv sein.")
+    if min(args.timesteps, args.export_every) <= 0:
+        raise ValueError("--timesteps und --export-every müssen positiv sein.")
     if not 0 < args.exploration_fraction <= 1:
         raise ValueError("--exploration-fraction muss zwischen 0 (exklusiv) und 1 liegen.")
-    if not 0 <= args.exploration_final_eps <= 1:
-        raise ValueError("--exploration-final-eps muss zwischen 0 und 1 liegen.")
     env = make_env()
     try:
         # Deliberately standard SB3 DQN: no custom network, Double-DQN
@@ -129,18 +128,18 @@ def main() -> None:
             model = DQN(
                 "CnnPolicy",
                 env,
-                learning_rate=1e-4,
-                # CleanRL-inspired Atari settings, reduced from its 1M buffer so
-                # that a free Colab runtime remains practical.
-                buffer_size=args.buffer_size,
+                learning_rate=LEARNING_RATE,
+                # The fixed settings above keep the example readable and
+                # memory-friendly for Colab.
+                buffer_size=REPLAY_BUFFER_SIZE,
                 optimize_memory_usage=True,
                 replay_buffer_kwargs={"handle_timeout_termination": False},
-                learning_starts=args.learning_starts,
+                learning_starts=RANDOM_START_STEPS,
                 batch_size=32,
                 train_freq=4,
                 target_update_interval=1_000,
                 exploration_fraction=args.exploration_fraction,
-                exploration_final_eps=args.exploration_final_eps,
+                exploration_final_eps=FINAL_EXPLORATION_RATE,
                 verbose=1,
                 seed=42,
                 device=args.device,

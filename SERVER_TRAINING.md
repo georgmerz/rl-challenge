@@ -60,7 +60,6 @@ nohup python train_dqn_vanilla.py \
   --device cuda \
   --timesteps 5000000 \
   --exploration-fraction 0.4 \
-  --exploration-final-eps 0.01 \
   --export-every 250000 \
   --output baselines/baseline_pong_dqn_long.onnx \
   > logs/pong_dqn_long.log 2>&1 &
