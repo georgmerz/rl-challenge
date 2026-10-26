@@ -77,15 +77,16 @@ python -c "from pettingzoo.atari import pong_v3; env = pong_v3.parallel_env(); e
 
 ### Gemeinsam in der Vorlesung
 
-#### 1. Zwei einfache Policies erzeugen und validieren
+#### 1. Drei einfache Policies erzeugen und validieren
 
 ```bash
 python create_baselines.py
 python validate_submission.py baselines/baseline_pong_static.onnx
+python validate_submission.py baselines/baseline_pong_reactive.onnx
 python validate_submission.py baselines/baseline_pong_track_ball.onnx
 ```
 
-Beide Validator-Aufrufe müssen mit `OK` enden. Dabei wird bereits der zentrale
+Alle Validator-Aufrufe müssen mit `OK` enden. Dabei wird bereits der zentrale
 Unterschied sichtbar: Ein Modell kann technisch korrekt und trotzdem
 spielerisch schwach sein.
 
@@ -103,6 +104,7 @@ Modelle auswählen:
 | Datei | Zweck |
 | --- | --- |
 | `baselines/baseline_pong_static.onnx` | Absichtlich schwache Policy, die nur `FIRE` ausgibt; Upload-/Schnittstellentest. |
+| `baselines/baseline_pong_reactive.onnx` | Mittelstarke Policy: Sie verfolgt den Ball erst auf der eigenen Spielfeldhälfte und eignet sich als leichterer Trainingsgegner. |
 | `baselines/baseline_pong_track_ball.onnx` | Deterministische bildbasierte Policy: Sie erkennt Ball und eigenen Schläger über Pixel-Farben und steuert in Ballrichtung. Kein trainiertes Modell. |
 
 Gemeinsam sollten einmal **Start**, **Pause**, **Fortsetzen** und **Stop**
@@ -373,7 +375,7 @@ ersten Lauf, der tatsächlich DQN-Updates ausführt, können Sie beispielsweise
 ```bash
 python create_baselines.py
 python train_dqn_vanilla.py --timesteps 100000 \
-  --opponent baselines/baseline_pong_track_ball.onnx \
+  --opponent baselines/baseline_pong_reactive.onnx \
   --output baselines/baseline_pong_dqn.onnx
 python validate_submission.py baselines/baseline_pong_dqn.onnx
 ```

@@ -2,7 +2,7 @@
 
 Beispiel:
     python create_baselines.py
-    python train_dqn_vanilla.py --opponent baselines/baseline_pong_track_ball.onnx
+    python train_dqn_vanilla.py --opponent baselines/baseline_pong_reactive.onnx
 """
 
 from __future__ import annotations
@@ -30,8 +30,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--opponent",
         type=Path,
-        default=Path("baselines/baseline_pong_track_ball.onnx"),
-        help="ONNX-Datei des Gegners (Standard: Ball-Tracking-Baseline).",
+        default=Path("baselines/baseline_pong_reactive.onnx"),
+        help="ONNX-Datei des Gegners (Standard: reaktive Baseline).",
     )
     parser.add_argument(
         "--player-id",

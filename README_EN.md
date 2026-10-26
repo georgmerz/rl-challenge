@@ -75,15 +75,16 @@ python -c "from pettingzoo.atari import pong_v3; env = pong_v3.parallel_env(); e
 
 ### Run together in class
 
-#### 1. Create and validate two simple policies
+#### 1. Create and validate three simple policies
 
 ```bash
 python create_baselines.py
 python validate_submission.py baselines/baseline_pong_static.onnx
+python validate_submission.py baselines/baseline_pong_reactive.onnx
 python validate_submission.py baselines/baseline_pong_track_ball.onnx
 ```
 
-Both validator calls must end with `OK`. This demonstrates an important
+All validator calls must end with `OK`. This demonstrates an important
 difference: a model can be technically valid while still playing poorly.
 
 #### 2. Run a browser match
@@ -98,6 +99,7 @@ On Windows PowerShell, use `$env:PORT=5001; python app.py`. Then open
 | File | Purpose |
 | --- | --- |
 | `baselines/baseline_pong_static.onnx` | Intentionally weak policy that always returns `FIRE`; useful for testing upload and interface compatibility. |
+| `baselines/baseline_pong_reactive.onnx` | Intermediate policy that tracks the ball only on its own half of the field; useful as an easier training opponent. |
 | `baselines/baseline_pong_track_ball.onnx` | Deterministic image-based policy that locates the ball and its paddle using pixel colors. It is not a trained model. |
 
 Try **Start**, **Pause**, **Resume**, and **Stop**, and observe the side changes
@@ -346,7 +348,7 @@ run that performs DQN updates, use, for example, 100,000 steps:
 ```bash
 python create_baselines.py
 python train_dqn_vanilla.py --timesteps 100000 \
-  --opponent baselines/baseline_pong_track_ball.onnx \
+  --opponent baselines/baseline_pong_reactive.onnx \
   --output baselines/baseline_pong_dqn.onnx
 python validate_submission.py baselines/baseline_pong_dqn.onnx
 ```

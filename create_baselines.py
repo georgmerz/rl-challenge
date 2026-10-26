@@ -76,6 +76,52 @@ class PongTrackBallPolicy(torch.nn.Module):
         return torch.where(ball.sum(dim=(1, 2)) > 0, tracking_action, fire)
 
 
+class PongReactivePolicy(torch.nn.Module):
+    """Track the ball only after it enters this player's half of the field.
+
+    This policy is deliberately placed between the static and full tracking
+    baselines: it can return many balls, but its late reaction makes it miss
+    difficult shots. It is a useful intermediate training opponent.
+    """
+
+    def forward(self, image: torch.Tensor, player_id: torch.Tensor) -> torch.Tensor:
+        # As in PongTrackBallPolicy, only the newest RGB frame is inspected.
+        image = image[:, 9:12]
+        red, green, blue = image[:, 0], image[:, 1], image[:, 2]
+        height, width = image.shape[2], image.shape[3]
+        y = torch.arange(height, device=image.device, dtype=torch.float32).reshape(1, height, 1)
+        x = torch.arange(width, device=image.device, dtype=torch.float32).reshape(1, 1, width)
+        playing_field = ((y >= 34) & (y <= 193)).to(torch.float32)
+
+        ball = ((red > 0.9) & (green > 0.9) & (blue > 0.9)).to(torch.float32) * playing_field
+        ball_count = ball.sum(dim=(1, 2)).clamp_min(1.0)
+        ball_x = (ball * x).sum(dim=(1, 2)) / ball_count
+        ball_y = (ball * y).sum(dim=(1, 2)) / ball_count
+
+        orange = ((red > 0.7) & (green > 0.3) & (green < 0.75) & (blue < 0.5)).to(torch.float32)
+        green_paddle = ((red < 0.55) & (green > 0.55) & (blue < 0.55)).to(torch.float32)
+        player_pixels = torch.where((player_id == 1).reshape(-1, 1, 1), orange, green_paddle) * playing_field
+        paddle_count = player_pixels.sum(dim=(1, 2)).clamp_min(1.0)
+        paddle_y = (player_pixels * y).sum(dim=(1, 2)) / paddle_count
+
+        move_up = torch.full_like(player_id, PADDLE_UP)
+        move_down = torch.full_like(player_id, PADDLE_DOWN)
+        noop = torch.full_like(player_id, NOOP)
+        fire = torch.full_like(player_id, FIRE)
+        tracking_action = torch.where(
+            ball_y < paddle_y - 8.0,
+            move_up,
+            torch.where(ball_y > paddle_y + 8.0, move_down, noop),
+        )
+
+        # Player 1 is left and player 2 right. Unlike the stronger baseline,
+        # this policy starts following only once the ball crosses midfield.
+        on_left_half = ball_x < width / 2
+        on_own_half = ((player_id == 1) & on_left_half) | ((player_id == 2) & ~on_left_half)
+        ball_visible = ball.sum(dim=(1, 2)) > 0
+        return torch.where(ball_visible, torch.where(on_own_half, tracking_action, noop), fire)
+
+
 def export_policy(policy: torch.nn.Module, filename: str) -> None:
     policy = policy.eval()
     image = torch.zeros(IMAGE_SHAPE, dtype=torch.float32)
@@ -102,5 +148,6 @@ if __name__ == "__main__":
     ):
         (OUT_DIR / stale_filename).unlink(missing_ok=True)
     export_policy(PongStaticPolicy(), "baseline_pong_static.onnx")
+    export_policy(PongReactivePolicy(), "baseline_pong_reactive.onnx")
     export_policy(PongTrackBallPolicy(), "baseline_pong_track_ball.onnx")
     print(f"Pong-Baselines geschrieben nach {OUT_DIR}")
