@@ -16,13 +16,16 @@ import inspect
 from pathlib import Path
 
 import gymnasium as gym
+import numpy as np
 import torch
+from gymnasium import spaces
 from stable_baselines3 import DQN
 from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.torch_layers import BaseFeaturesExtractor, NatureCNN
 from torch import nn
 from torch.nn import functional as F
 
-from train_ppo_sb3 import FRAME_STACK, Player1VsPongBaselineEnv, PlayingFieldObservation, StackFramesAsChannels
+from train_ppo_sb3 import FRAME_STACK, Player1VsPongBaselineEnv
 
 # These are deliberately fixed so that the usual student command only needs
 # --timesteps and --output. They are ordinary Atari-DQN defaults, not rules of
@@ -33,31 +36,60 @@ RANDOM_START_STEPS = 80_000
 FINAL_EXPLORATION_RATE = 0.01
 
 
+class PublicFrameStack(gym.ObservationWrapper):
+    """Expose four raw frames exactly as the public ONNX input image."""
+
+    def __init__(self, env: gym.Env) -> None:
+        super().__init__(env)
+        self.observation_space = spaces.Box(0.0, 1.0, shape=(12, 210, 160), dtype=np.float32)
+
+    def observation(self, frames: np.ndarray) -> np.ndarray:
+        frames = np.asarray(frames)
+        image = frames.transpose(0, 3, 1, 2).reshape(12, 210, 160)
+        return np.ascontiguousarray(image, dtype=np.float32) / 255.0
+
+
+class AtariPreprocessorCNN(BaseFeaturesExtractor):
+    """The one shared preprocessing path for training and ONNX inference."""
+
+    def __init__(
+        self,
+        observation_space: spaces.Box,
+        features_dim: int = 512,
+        normalized_image: bool = True,
+    ) -> None:
+        super().__init__(observation_space, features_dim)
+        processed_space = spaces.Box(0.0, 1.0, shape=(FRAME_STACK, 84, 84), dtype=np.float32)
+        self.encoder = NatureCNN(processed_space, features_dim=features_dim, normalized_image=normalized_image)
+
+    def forward(self, image: torch.Tensor) -> torch.Tensor:
+        # Public input: four normalized RGB frames, oldest to newest.
+        batch = image.shape[0]
+        frames = image.reshape(batch, FRAME_STACK, 3, 210, 160)[:, :, :, 34:194, :]
+        grayscale = 0.299 * frames[:, :, 0] + 0.587 * frames[:, :, 1] + 0.114 * frames[:, :, 2]
+        resized = F.interpolate(grayscale, size=(84, 84), mode="bilinear", align_corners=False)
+        return self.encoder(resized)
+
+
 class ExportedPolicy(nn.Module):
-    """Add the training preprocessing to the fixed public ONNX interface."""
+    """Expose the trained Q-network through the fixed public ONNX interface."""
 
     def __init__(self, q_net: nn.Module) -> None:
         super().__init__()
         self.q_net = copy.deepcopy(q_net).cpu()
 
     def forward(self, image: torch.Tensor, player_id: torch.Tensor) -> torch.Tensor:
-        # Four RGB frames arrive as twelve channels (oldest to newest). Match
-        # CleanRL's Atari-style crop, grayscale and resize preprocessing.
-        batch = image.shape[0]
-        frames = image.reshape(batch, FRAME_STACK, 3, 210, 160)[:, :, :, 34:194, :]
-        image = (0.299 * frames[:, :, 0] + 0.587 * frames[:, :, 1] + 0.114 * frames[:, :, 2]) * 255.0
-        image = F.interpolate(image, size=(84, 84), mode="bilinear", align_corners=False)
+        # The Q-network already contains AtariPreprocessorCNN. Consequently
+        # this path is identical during SB3 training and ONNX inference.
         action = torch.argmax(self.q_net(image), dim=1).to(torch.int64)
         return action + player_id * 0
 
 
 def make_env() -> gym.Env:
-    """Crop Atari's static header and use the standard 84 x 84 DQN input."""
-    env = PlayingFieldObservation(Player1VsPongBaselineEnv())
-    env = gym.wrappers.ResizeObservation(env, (84, 84))
-    env = gym.wrappers.GrayscaleObservation(env, keep_dim=True)
+    """Stack raw frames; the model performs all visual preprocessing itself."""
+    env = Player1VsPongBaselineEnv()
     env = gym.wrappers.FrameStackObservation(env, FRAME_STACK)
-    return StackFramesAsChannels(env)
+    return PublicFrameStack(env)
 
 
 def export_policy(model: DQN, output: Path) -> None:
@@ -119,8 +151,8 @@ def main() -> None:
         raise ValueError("--exploration-fraction muss zwischen 0 (exklusiv) und 1 liegen.")
     env = make_env()
     try:
-        # Deliberately standard SB3 DQN: no custom network, Double-DQN
-        # subclass, reward shaping or special callback.
+        # Standard SB3 DQN. The feature extractor contains only the shared
+        # image preprocessing plus SB3's standard NatureCNN encoder.
         if args.resume:
             model = DQN.load(args.resume, env=env, device=args.device)
             print(f"Training wird fortgesetzt: {args.resume}")
@@ -140,6 +172,10 @@ def main() -> None:
                 target_update_interval=1_000,
                 exploration_fraction=args.exploration_fraction,
                 exploration_final_eps=FINAL_EXPLORATION_RATE,
+                policy_kwargs={
+                    "features_extractor_class": AtariPreprocessorCNN,
+                    "normalize_images": False,
+                },
                 verbose=1,
                 seed=42,
                 device=args.device,

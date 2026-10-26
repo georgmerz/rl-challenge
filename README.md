@@ -187,8 +187,11 @@ zulässigen Algorithmus noch eine faire Evaluation im Turnier.
 [`train_dqn_vanilla.py`](train_dqn_vanilla.py) trainiert Standard-DQN aus
 Stable-Baselines3 ausschließlich als linken/orangen Spieler (`player_id=1`)
 gegen die feste Ball-Tracking-Baseline. Es beschneidet das Spielfeld,
-verwendet Graustufen, `84 × 84` Pixel und vier Trainingsframes. Beim
-ONNX-Export ist die dazu passende Vorverarbeitung im Modell enthalten.
+verwendet Graustufen, `84 × 84` Pixel und vier Trainingsframes. Diese
+Vorverarbeitung liegt im PyTorch-Netz selbst: Der Environment-Adapter stapelt
+und normalisiert nur die vier Rohframes zum öffentlichen 12-Kanal-Format;
+Beschneiden, Graustufen und Skalieren werden beim ONNX-Export unverändert Teil
+des Modells.
 
 ```bash
 python train_dqn_vanilla.py --timesteps 1000000 \
