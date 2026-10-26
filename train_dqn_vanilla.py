@@ -24,6 +24,8 @@ from torch.nn import functional as F
 from pong_opponent_env import FRAME_STACK, PongVsOnnxEnv
 
 
+# Diese Optionen sind die wenigen Einstellungen, die man für einen ersten
+# Lauf normalerweise verändern möchte. Die DQN-Details stehen bewusst unten.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train vanilla DQN against an ONNX Pong opponent.")
     parser.add_argument(
@@ -53,9 +55,11 @@ def main() -> None:
         raise ValueError("--timesteps und --export-every müssen positiv sein.")
 
     # 1. Pong-Umgebung gegen den gewählten ONNX-Gegner erzeugen.
+    #    Bei player_id=0 wechselt sie pro Episode die trainierte Seite.
     env = PongVsOnnxEnv(args.opponent, player_id=None if args.player_id == 0 else args.player_id)
     try:
-        # 2. Standard-DQN erstellen. Die festen Werte sind übliche Atari-Startwerte.
+        # 2. Standard-DQN erstellen. Die festen Werte sind übliche Atari-
+        #    Startwerte und kein Teil der Challenge-Regeln.
         model = DQN(
             "CnnPolicy",
             env,
@@ -73,7 +77,8 @@ def main() -> None:
             device=args.device,
         )
 
-        # 3. Lernen und regelmäßig portable ONNX-Checkpoints schreiben.
+        # 3. Lernen. Ein Checkpoint enthält sowohl SB3-Gewichte (.zip) als
+        #    auch eine im Browser lauffähige ONNX-Datei (.onnx).
         output = Path(args.output)
         model.learn(
             total_timesteps=args.timesteps,
@@ -99,32 +104,47 @@ class PongCNN(BaseFeaturesExtractor):
         self.cnn = NatureCNN(processed_space, features_dim=features_dim, normalized_image=normalized_image)
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
-        # [B, 13, 210, 160] -> vier Graustufenbilder [B, 4, 84, 84].
-        # Kanal 12 enthält überall 0 (links) oder 1 (rechts).
+        # Internes Trainingsformat: [B, 13, 210, 160]. Die Kanäle 0..11
+        # enthalten vier RGB-Frames, Kanal 12 kodiert die Spielerseite.
         batch_size = image.shape[0]
         rgb = image[:, :12].reshape(batch_size, FRAME_STACK, 3, 210, 160)[:, :, :, 34:194, :]
+        # Vom Originalbild bleibt nur das Spielfeld. Anschließend folgen
+        # Graustufen und 84x84 Skalierung wie bei klassischen Atari-DQNs.
         gray = 0.299 * rgb[:, :, 0] + 0.587 * rgb[:, :, 1] + 0.114 * rgb[:, :, 2]
         visual_features = self.cnn(F.interpolate(gray, size=(84, 84), mode="bilinear", align_corners=False))
+        # Das Q-Netz bekommt 512 Bildmerkmale PLUS dieses eine Seitenmerkmal.
         side_feature = image[:, 12, 0, 0].unsqueeze(1)
         return torch.cat((visual_features, side_feature), dim=1)
 
 
 class OnnxPolicy(nn.Module):
-    """Erzeugt aus player_id das Seitenmerkmal für das trainierte Q-Netz."""
+    """Übersetzt den öffentlichen ONNX-Vertrag in das interne DQN-Format.
+
+    Außen: image mit 12 Kanälen und player_id aus dem Runner.
+    Innen: image mit 13 Kanälen, weil DQN ein Seitenmerkmal mitlernt.
+    """
 
     def __init__(self, q_net: nn.Module) -> None:
         super().__init__()
         self.q_net = copy.deepcopy(q_net).cpu()
 
     def forward(self, image: torch.Tensor, player_id: torch.Tensor) -> torch.Tensor:
+        # Der Runner liefert 1 für links und 2 für rechts. Das Training kennt
+        # dagegen 0 bzw. 1. Der so erzeugte Kanal macht player_id zu einer
+        # echten, entscheidungsrelevanten Eingabe des Q-Netzes.
         side_channel = (player_id - 1).to(image.dtype).reshape(-1, 1, 1, 1)
         side_channel = side_channel.expand(-1, 1, 210, 160)
         network_input = torch.cat((image, side_channel), dim=1)
+        # DQN liefert sechs Q-Werte. argmax wählt die beste Atari-Aktion 0..5.
         return torch.argmax(self.q_net(network_input), dim=1).to(torch.int64)
 
 
 def export_onnx(model: DQN, output: Path) -> None:
-    """Exportiert die gelernte greedy Policy für den Browser-Runner."""
+    """Exportiert die gelernte greedy Policy im festen Browser-Format.
+
+    Die Beispieltensoren beschreiben den öffentlichen Vertrag, nicht das
+    13-Kanal-Trainingsformat. OnnxPolicy ergänzt den dreizehnten Kanal selbst.
+    """
     output.parent.mkdir(parents=True, exist_ok=True)
     policy = OnnxPolicy(model.policy.q_net).eval()
     image = torch.zeros((1, 12, 210, 160), dtype=torch.float32)
@@ -151,6 +171,8 @@ class CheckpointCallback(BaseCallback):
     def _on_step(self) -> bool:
         if self.num_timesteps >= self.next_checkpoint:
             checkpoint = self.output.with_name(f"{self.output.stem}_step_{self.num_timesteps}")
+            # .zip ist zum Fortsetzen des Trainings; .onnx ist zum Spielen
+            # im Browser und für die spätere Abgabe.
             self.model.save(checkpoint)
             export_onnx(self.model, checkpoint.with_suffix(".onnx"))
             print(f"Checkpoint nach {self.num_timesteps} Schritten: {checkpoint}.zip und .onnx")
