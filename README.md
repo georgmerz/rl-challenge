@@ -5,6 +5,10 @@ Turnier trifft sie auf einen zuvor nicht bekannten Gegner. Ihr verändert nicht
 die Spielumgebung, sondern trainiert eine Policy und reicht sie als portable
 ONNX-Datei ein.
 
+![Atari Pong aus der PettingZoo-Dokumentation](https://pettingzoo.farama.org/main/_static/img/icons/atari/pong.png)
+
+*Abbildung: Atari Pong aus der [offiziellen PettingZoo-Pong-Dokumentation](https://pettingzoo.farama.org/main/environments/atari/pong/), Farama Foundation.*
+
 ## Auf einen Blick
 
 | Was? | Vorgabe |
