@@ -200,31 +200,18 @@ python train_dqn_vanilla.py --timesteps 1000000 \
 
 Das Beispiel ist eine Startvorlage, keine Referenz für eine faire
 Turnierevaluation: Sein Trainings-Timeout beträgt 1.000 Schritte statt 2.000
-und es sieht nur einen festen Gegner sowie eine Seite. Checkpoints,
-langes GPU-Training und Fortsetzen sind in
-[SERVER_TRAINING.md](SERVER_TRAINING.md) beschrieben.
+und es sieht nur einen festen Gegner sowie eine Seite. Für einen langen
+GPU-Lauf genügen dieselben Optionen, etwa:
 
-### PPO- und Double-DQN-Beispiele
+```bash
+python train_dqn_vanilla.py --device cuda --timesteps 5000000 \
+  --exploration-fraction 0.4 --export-every 250000 \
+  --output baselines/baseline_pong_dqn.onnx
+```
 
-[`train_ppo.py`](train_ppo.py) trainiert eine gemeinsame Policy im Self-Play:
-In jedem Trainingsschritt entscheidet dasselbe Netz für beide PettingZoo-
-Spieler. Das exportierte ONNX-Modell erfüllt den öffentlichen Vertrag, nutzt
-aber nur den neuesten der vier Frames und ignoriert `player_id`; außerdem
-folgt sein Episodenende dem PettingZoo-Environment, nicht einer einzelnen
-Turnierrunde mit 2.000-Schritte-Limit. Es ist somit ein kompaktes
-Self-Play-Beispiel, keine exakte Turnier-Simulation.
-
-[`train_ppo_sb3.py`](train_ppo_sb3.py) ist ein älteres, stärker angepasstes
-Double-DQN-Beispiel: ebenfalls nur links/orange gegen die Tracking-Baseline,
-mit einem 1.000-Schritte-Trainings-Timeout und eigener Evaluation. Es ist
-kompatibel mit dem ONNX-Vertrag, aber ebenfalls nicht mit dem vollständigen
-Turnierablauf gleichzusetzen.
-
-Training kann CPU, Apple Silicon, Colab oder einen CUDA-Server verwenden.
-Eine GPU kann längere Läufe beschleunigen, ist aber weder für alle Gruppen
-noch für die Ausführung der Abgabe erforderlich. Das Colab-Notebook
-[`train_ppo_colab.ipynb`](train_ppo_colab.ipynb) ist eine weitere
-Startumgebung.
+Training kann CPU, Apple Silicon oder CUDA verwenden. Eine GPU kann längere
+Läufe beschleunigen, ist aber weder für alle Gruppen noch für die Ausführung
+der Abgabe erforderlich.
 
 ### Offene methodische Entscheidungen
 

@@ -13,10 +13,12 @@ from __future__ import annotations
 import argparse
 import copy
 import inspect
+from collections import deque
 from pathlib import Path
 
 import gymnasium as gym
 import numpy as np
+import onnxruntime as ort
 import torch
 from gymnasium import spaces
 from stable_baselines3 import DQN
@@ -25,8 +27,6 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor, NatureC
 from torch import nn
 from torch.nn import functional as F
 
-from train_ppo_sb3 import FRAME_STACK, Player1VsPongBaselineEnv
-
 # These are deliberately fixed so that the usual student command only needs
 # --timesteps and --output. They are ordinary Atari-DQN defaults, not rules of
 # the challenge; changing them is an optional experiment.
@@ -34,6 +34,84 @@ LEARNING_RATE = 1e-4
 REPLAY_BUFFER_SIZE = 100_000
 RANDOM_START_STEPS = 80_000
 FINAL_EXPLORATION_RATE = 0.01
+FRAME_STACK = 4
+MAX_TRAINING_STEPS = 1_000
+
+
+def public_image(frames: np.ndarray) -> np.ndarray:
+    """Convert four uint8 HWC frames to the challenge's float32 NCHW input."""
+    frames = np.asarray(frames)
+    image = frames.transpose(0, 3, 1, 2).reshape(12, 210, 160)
+    return np.ascontiguousarray(image, dtype=np.float32) / 255.0
+
+
+class Player1VsBaselineEnv(gym.Env):
+    """Single-agent view: train left/orange against the tracking baseline."""
+
+    metadata = {"render_modes": []}
+
+    def __init__(self) -> None:
+        from pettingzoo.atari import pong_v3
+
+        self.env = pong_v3.parallel_env(render_mode=None, num_players=2)
+        opponent_path = Path(__file__).resolve().parent / "baselines" / "baseline_pong_track_ball.onnx"
+        if not opponent_path.is_file():
+            raise FileNotFoundError("Bitte zuerst `python create_baselines.py` ausführen.")
+        self.opponent = ort.InferenceSession(str(opponent_path), providers=["CPUExecutionProvider"])
+        self.observation_space = spaces.Box(0, 255, shape=(210, 160, 3), dtype=np.uint8)
+        self.action_space = spaces.Discrete(6)
+        self.player_1: str | None = None
+        self.player_2: str | None = None
+        self.frame_history: dict[str, deque[np.ndarray]] | None = None
+        self.episode_steps = 0
+
+    def reset(self, *, seed=None, options=None):
+        super().reset(seed=seed)
+        observations, _ = self.env.reset(seed=seed)
+        # pong_v3: first_0 is right/green; second_0 is left/orange.
+        self.player_2, self.player_1 = self.env.possible_agents
+        self.frame_history = {
+            name: deque([observations[name].copy()] * FRAME_STACK, maxlen=FRAME_STACK)
+            for name in self.env.possible_agents
+        }
+        self.episode_steps = 0
+        return observations[self.player_1], {}
+
+    def step(self, action: int):
+        if self.player_1 is None or self.player_2 is None or self.frame_history is None:
+            raise RuntimeError("reset() muss vor step() aufgerufen werden.")
+        opponent_action = int(
+            np.asarray(
+                self.opponent.run(
+                    ["action"],
+                    {
+                        "image": public_image(np.stack(self.frame_history[self.player_2]))[None],
+                        "player_id": np.asarray([2], dtype=np.int64),
+                    },
+                )[0]
+            ).reshape(-1)[0]
+        )
+        observations, rewards, terminations, truncations, _ = self.env.step(
+            {self.player_1: int(action), self.player_2: opponent_action}
+        )
+        for name, observation in observations.items():
+            self.frame_history[name].append(observation)
+        self.episode_steps += 1
+
+        point_scored = any(reward != 0 for reward in rewards.values())
+        natural_end = bool(terminations.get(self.player_1, False)) or bool(truncations.get(self.player_1, False))
+        timed_out = not (point_scored or natural_end) and self.episode_steps >= MAX_TRAINING_STEPS
+        terminated = point_scored or natural_end
+        truncated = timed_out
+        reward = float(rewards.get(self.player_1, 0.0))
+        if terminated or truncated:
+            observation = np.zeros(self.observation_space.shape, dtype=np.uint8)
+        else:
+            observation = observations[self.player_1]
+        return observation, reward, terminated, truncated, {}
+
+    def close(self) -> None:
+        self.env.close()
 
 
 class PublicFrameStack(gym.ObservationWrapper):
@@ -44,9 +122,7 @@ class PublicFrameStack(gym.ObservationWrapper):
         self.observation_space = spaces.Box(0.0, 1.0, shape=(12, 210, 160), dtype=np.float32)
 
     def observation(self, frames: np.ndarray) -> np.ndarray:
-        frames = np.asarray(frames)
-        image = frames.transpose(0, 3, 1, 2).reshape(12, 210, 160)
-        return np.ascontiguousarray(image, dtype=np.float32) / 255.0
+        return public_image(frames)
 
 
 class AtariPreprocessorCNN(BaseFeaturesExtractor):
@@ -87,7 +163,7 @@ class ExportedPolicy(nn.Module):
 
 def make_env() -> gym.Env:
     """Stack raw frames; the model performs all visual preprocessing itself."""
-    env = Player1VsPongBaselineEnv()
+    env = Player1VsBaselineEnv()
     env = gym.wrappers.FrameStackObservation(env, FRAME_STACK)
     return PublicFrameStack(env)
 
