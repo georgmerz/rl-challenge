@@ -1,9 +1,11 @@
 # RL Challenge: Atari Pong
 
-In dieser Challenge entwickelt ihr in **Zweiergruppen** eine Policy für
+**Deutsch** · [English version](README_EN.md)
+
+In dieser Challenge entwickeln Sie in **Zweiergruppen** eine Policy für
 **Atari Pong**. Im Turnier trifft sie auf einen zuvor nicht bekannten Gegner.
-Ihr verändert nicht die Spielumgebung, sondern trainiert eine Policy, reicht
-sie als portable ONNX-Datei ein und präsentiert Vorgehen und Ergebnisse in
+Sie verändern nicht die Spielumgebung, sondern trainieren eine Policy, reichen
+sie als portable ONNX-Datei ein und präsentieren Vorgehen und Ergebnisse in
 einem zehnminütigen Vortrag.
 
 ![Animierte Atari-Pong-Szene aus der PettingZoo-Dokumentation](https://pettingzoo.farama.org/_images/atari_pong.gif)
@@ -189,9 +191,9 @@ flowchart LR
 ### Was ist ONNX?
 
 **ONNX** (*Open Neural Network Exchange*) ist ein portables Dateiformat für
-fertig trainierte neuronale Netze. Ihr könnt ein Modell zum Beispiel mit
+fertig trainierte neuronale Netze. Sie können ein Modell zum Beispiel mit
 PyTorch trainieren und anschließend als `.onnx` exportieren. Der
-Turnier-Runner benötigt weder euren Trainingscode noch PyTorch: Er lädt nur
+Turnier-Runner benötigt weder Ihren Trainingscode noch PyTorch: Er lädt nur
 die ONNX-Datei mit ONNX Runtime auf CPU und ruft ihre Policy auf.
 
 ```text
@@ -324,45 +326,54 @@ Ballwechsel auslösen; der Pong-Aufschlag ist zeitbegrenzt.
 
 ## 4. Projektarbeit in Zweiergruppen
 
-Nach dem gemeinsamen Durchlauf arbeitet ihr in Zweiergruppen. Beide Mitglieder
-sollen das gesamte System erklären können, auch wenn ihr einzelne Aufgaben
-untereinander aufteilt. Stimmt insbesondere gemeinsam ab:
+Nach dem gemeinsamen Durchlauf arbeiten Sie in Zweiergruppen. Beide Mitglieder
+sollen das gesamte System erklären können, auch wenn Sie einzelne Aufgaben
+untereinander aufteilen. Stimmen Sie insbesondere gemeinsam ab:
 
-- welche Forschungsfrage oder Verbesserung ihr untersuchen wollt,
+- welche Forschungsfrage oder Verbesserung Sie untersuchen möchten,
 - wie State, Vorverarbeitung, Reward und Algorithmus gestaltet werden,
 - gegen welche Gegner und auf welchen Seiten trainiert wird,
 - welche Experimente einen fairen Vergleich ermöglichen und
 - wer welche Ergebnisse im gemeinsamen Vortrag präsentiert.
 
-Haltet Entscheidungen und Versuchsergebnisse während der Arbeit gemeinsam
-fest. So entstehen Bericht und Vortrag aus euren Experimenten und müssen nicht
+Halten Sie Entscheidungen und Versuchsergebnisse während der Arbeit gemeinsam
+fest. So entstehen Bericht und Vortrag aus Ihren Experimenten und müssen nicht
 erst am Ende rekonstruiert werden.
 
-### Training: eigene Methode wählen
+### Das DQN-Beispiel als gemeinsamer Startpunkt
 
-Die Trainingsprogramme sind Startpunkte. Sie definieren weder den einzigen
-zulässigen Algorithmus noch eine faire Evaluation im Turnier.
+Das Repository enthält bewusst **keine fertige Wettbewerbslösung**. Das
+DQN-Beispiel zeigt jedoch einmal die vollständige technische Kette, die Sie für
+eine eigene Methode benötigen:
 
-### DQN-Minimalbeispiel
+```text
+Pong gegen ONNX-Gegner → Vorverarbeitung → DQN-Training
+        → Checkpoint → ONNX-Export → Validator → Browser-Runner
+```
 
-[`train_dqn_vanilla.py`](train_dqn_vanilla.py) ist ein funktionierender
-Startpunkt für Stable-Baselines3-DQN. Die zugehörige
-[`pong_opponent_env.py`](pong_opponent_env.py) trainiert gegen ein wählbares
-ONNX-Gegnermodell und verwendet dafür dieselbe ONNX-Schnittstelle wie der
-Turnier-Runner.
+| Datei | Rolle im Beispiel |
+| --- | --- |
+| [`pong_opponent_env.py`](pong_opponent_env.py) | Macht aus dem Zwei-Spieler-Spiel eine Gymnasium-Umgebung: Eine Seite lernt, die andere wird von einem wählbaren ONNX-Modell gesteuert. |
+| [`train_dqn_vanilla.py`](train_dqn_vanilla.py) | Definiert Vorverarbeitung, CNN, DQN, Checkpoints und den abschließenden ONNX-Export. |
+
+Der 128-Schritte-Lauf aus Abschnitt 1 ist nur ein technischer Test. Für einen
+ersten Lauf, der tatsächlich DQN-Updates ausführt, können Sie beispielsweise
+100.000 Schritte verwenden:
 
 ```bash
 python create_baselines.py
-python train_dqn_vanilla.py --timesteps 1000000 \
+python train_dqn_vanilla.py --timesteps 100000 \
   --opponent baselines/baseline_pong_track_ball.onnx \
   --output baselines/baseline_pong_dqn.onnx
+python validate_submission.py baselines/baseline_pong_dqn.onnx
 ```
 
 So arbeitet das Beispiel:
 
 1. `PongVsOnnxEnv` trainiert pro Episode eine Seite und lässt die andere
-   Seite mit dem ONNX-Gegner spielen. `--player-id 0` (Standard) wechselt die
-   trainierte Seite; `1` und `2` erzwingen links bzw. rechts.
+   Seite mit dem ONNX-Gegner spielen. `--player-id 0` (Standard) wählt die
+   trainierte Seite pro Episode zufällig; `1` und `2` erzwingen links bzw.
+   rechts.
 2. `PongPreprocessor` schneidet das Spielfeld aus und komprimiert die vier
    RGB-Frames auf vier Graustufenbilder mit `84 × 84` Pixeln. Ein fünfter Kanal
    kodiert die Seite. Dasselbe Modul wird in die exportierte ONNX-Policy
@@ -371,23 +382,26 @@ So arbeitet das Beispiel:
 3. DQN lernt aus dem unveränderten Pong-Reward und schreibt alle
    `--export-every` Schritte ein `.zip`-Checkpoint sowie eine `.onnx`-Datei.
 
-Der 1.000-Schritte-Timeout und der feste Gegner gelten nur für dieses
-Trainingsbeispiel, nicht für das Turnier. Ein kurzer Pipeline-Test kann schon
-eine technisch gültige Datei erzeugen, beginnt wegen der ersten 5.000
-Sammelschritte aber noch nicht mit den DQN-Updates:
-
-```bash
-python train_dqn_vanilla.py --timesteps 1000 --export-every 500 \
-  --output baselines/smoke_test.onnx
-python validate_submission.py baselines/smoke_test.onnx
-```
-
 Nach einem Lauf sind die `.onnx`-Dateien für Browser und Abgabe gedacht; die
 gleichnamigen `.zip`-Dateien dienen nur dem Fortsetzen oder Analysieren des
-SB3-Trainings. Das Beispiel ist ein Einstieg, keine Referenz für faire
-Turnierbewertung: Gruppen sollten später über weitere Gegner, beide Seiten
-und getrennte Evaluationen nachdenken. Training kann CPU, Apple Silicon oder
-CUDA verwenden; eine GPU beschleunigt längere Läufe, ist aber nicht nötig.
+SB3-Trainings. Der 1.000-Schritte-Timeout, DQN und der feste Gegner sind
+Entscheidungen dieses Beispiels und keine Turnierregeln.
+
+### Vom Beispiel zum eigenen Experiment
+
+Übernehmen Sie das Beispiel nicht unkritisch. Vereinbaren Sie in Ihrer Gruppe
+mindestens eine begründete Fragestellung, zum Beispiel:
+
+- Wie verändert ein anderer Trainingsgegner oder ein Gegner-Pool das Ergebnis?
+- Ist eine andere Vorverarbeitung oder Netzarchitektur besser?
+- Hilft Reward Shaping, und welches unerwünschte Verhalten kann es erzeugen?
+- Wie unterscheiden sich Modelle, die links, rechts oder auf beiden Seiten
+  trainiert wurden?
+
+Vergleichen Sie Ihre Varianten anschließend unter denselben Bedingungen. Das
+Beispiel ist ein Einstieg, keine Referenz für faire Turnierbewertung. Training
+kann auf CPU, Apple Silicon oder CUDA laufen; eine GPU beschleunigt längere
+Läufe, ist aber nicht zwingend erforderlich.
 
 ## 5. Was sollten Sie im Bericht diskutieren?
 
@@ -438,8 +452,8 @@ ist.
 
 ## 6. Der 10-Minuten-Vortrag
 
-Am **13.11.2026** präsentiert jede Zweiergruppe ihr Vorgehen und ihre
-Ergebnisse und nimmt anschließend am Turnier teil. Der Vortrag soll eine kurze,
+Am **13.11.2026** präsentieren Sie als Zweiergruppe Ihr Vorgehen und Ihre
+Ergebnisse und nehmen anschließend am Turnier teil. Der Vortrag soll eine kurze,
 verständliche Fassung des Berichts sein – keine Führung durch den Quellcode.
 Beide Gruppenmitglieder übernehmen einen inhaltlichen Teil.
 

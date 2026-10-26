@@ -38,7 +38,7 @@ def parse_args() -> argparse.Namespace:
         choices=(0, 1, 2),
         type=int,
         default=0,
-        help="0: Seiten pro Episode wechseln (Standard); 1: links; 2: rechts.",
+        help="0: Seite pro Episode zufällig wählen (Standard); 1: links; 2: rechts.",
     )
     parser.add_argument("--timesteps", type=int, default=1_000_000, help="Anzahl Trainingsschritte.")
     parser.add_argument("--output", default="baselines/baseline_pong_dqn.onnx", help="Ziel für die ONNX-Datei.")
@@ -54,7 +54,7 @@ def main() -> None:
         raise ValueError("--timesteps und --export-every müssen positiv sein.")
 
     # 1. Pong-Umgebung gegen den gewählten ONNX-Gegner erzeugen.
-    #    Bei player_id=0 wechselt sie pro Episode die trainierte Seite.
+    #    Bei player_id=0 wählt sie die trainierte Seite pro Episode zufällig.
     env = PongVsOnnxEnv(args.opponent, player_id=None if args.player_id == 0 else args.player_id)
     try:
         # 2. Standard-DQN erstellen. Die festen Werte sind übliche Atari-

@@ -56,10 +56,10 @@ class PongVsOnnxEnv(gym.Env):
     """Trainiert eine Seite von Pong gegen ein wählbares ONNX-Gegnermodell.
 
     ``player_id=1`` trainiert links/orange, ``player_id=2`` rechts/grün.
-    Mit ``player_id=None`` wechselt die trainierte Seite pro Episode. Die
-    Beobachtung hat intern fünf kleine ``uint8``-Kanäle: vier vorverarbeitete
-    Bilder und einen Seitenkanal. Der öffentliche ONNX-Vertrag bleibt davon
-    unberührt.
+    Mit ``player_id=None`` wird die trainierte Seite pro Episode zufällig
+    gewählt. Die Beobachtung hat intern fünf kleine ``uint8``-Kanäle: vier
+    vorverarbeitete Bilder und einen Seitenkanal. Der öffentliche
+    ONNX-Vertrag bleibt davon unberührt.
     """
 
     metadata = {"render_modes": []}
