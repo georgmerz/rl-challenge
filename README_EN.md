@@ -44,34 +44,93 @@ pipeline once:
 Create baseline → validate ONNX → run match → run DQN briefly → test own export
 ```
 
-### One-time setup
+### One-time setup: start locally from scratch
 
-**Python 3.11** is recommended. The local runner executes ONNX models on the
-CPU; a GPU is not required to run a submission.
+The local route requires three programs. A GPU is not needed to execute the
+baselines, validator, or browser runner.
 
-Alternatively, open the complete shared walkthrough in Google Colab:
+| Program | Installation and purpose |
+| --- | --- |
+| **Git** | Install from [git-scm.com/downloads](https://git-scm.com/downloads/); it downloads and updates the repository. |
+| **Python 3.11** | Install from [python.org](https://www.python.org/downloads/); do not accidentally use a different Python version. On Windows, enable the option that adds Python to `PATH`. |
+| **Visual Studio Code** | Optionally install from [code.visualstudio.com](https://code.visualstudio.com/download); it provides an editor and integrated terminal. Any other editor and terminal will also work. |
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/georgmerz/rl-challenge/blob/main/RL_Challenge_Colab.ipynb)
+Next, open a terminal or PowerShell and verify the installation.
 
-The notebook installs the dependencies and Atari ROMs, creates the baselines,
-opens the browser runner in a Colab iframe, and executes the short DQN/ONNX
-test. Colab storage is temporary, so download generated models before the
-runtime ends.
+macOS and Linux:
 
 ```bash
+git --version
+python3.11 --version
+```
+
+Windows PowerShell:
+
+```powershell
+git --version
+py -3.11 --version
+```
+
+Both commands must print a version number. Then download the public repository;
+this does not require a GitHub account:
+
+```bash
+git clone https://github.com/georgmerz/rl-challenge.git
 cd rl-challenge
-python -m venv .venv
+```
+
+Open the folder in VS Code via **File → Open Folder**. If the `code` command is
+configured, `code .` is an equivalent shortcut.
+
+#### Virtual Python environment on macOS or Linux
+
+The virtual environment keeps this project's packages separate from other
+Python projects:
+
+```bash
+python3.11 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements.txt
+python -m pip install --upgrade pip
+python -m pip install --prefer-binary -r requirements.txt
 AutoROM --accept-license
 ```
 
-On Windows, activate the environment with `.venv\Scripts\Activate.ps1`. The
-following smoke test also checks whether the Pong ROM is available:
+#### Virtual Python environment on Windows
+
+```powershell
+py -3.11 -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install --prefer-binary -r requirements.txt
+AutoROM --accept-license
+```
+
+If PowerShell blocks activation, run
+`Set-ExecutionPolicy -Scope Process Bypass` first in that terminal. During
+later work in a new terminal, only reactivate the environment; packages and
+the ROM do not need to be installed again.
+
+This command checks the installation and Pong ROM:
 
 ```bash
 python -c "from pettingzoo.atari import pong_v3; env = pong_v3.parallel_env(); env.reset(seed=42); env.close(); print('Setup and Pong ROM: OK')"
 ```
+
+The last line must read `Setup and Pong ROM: OK`. If `git`, `python3.11`, or
+`py -3.11` already fails, fix that installation or its `PATH` configuration
+before continuing.
+
+### Alternative without local installation: Google Colab
+
+Anyone who does not want to install Git or Python locally can run the complete
+shared walkthrough in Google Colab:
+
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/georgmerz/rl-challenge/blob/main/RL_Challenge_Colab.ipynb)
+
+The notebook downloads the repository, installs dependencies and Atari ROMs,
+creates the baselines, opens the browser runner in a Colab iframe, and executes
+the short DQN/ONNX test. Colab storage is temporary, so download generated
+models before the runtime ends.
 
 ### Run together in class
 

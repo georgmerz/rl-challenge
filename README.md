@@ -44,36 +44,93 @@ Kette ausführt:
 Baseline erzeugen → ONNX validieren → Duell starten → DQN kurz ausführen → eigenen Export testen
 ```
 
-### Einmalige Vorbereitung
+### Einmalige Vorbereitung: lokal von null starten
 
-Empfohlen ist **Python 3.11**. Der lokale Runner verwendet ONNX Runtime auf
-CPU; zum Ausführen einer Abgabe ist keine GPU nötig.
+Für den lokalen Weg werden drei Programme benötigt. Eine GPU ist nicht nötig,
+um Baselines, Validator und Browser-Runner auszuführen.
 
-Alternativ kann der gemeinsame Durchlauf vollständig in Google Colab geöffnet
-werden:
+| Programm | Installation und Zweck |
+| --- | --- |
+| **Git** | Von [git-scm.com/downloads](https://git-scm.com/downloads/) installieren; lädt und aktualisiert das Repository. |
+| **Python 3.11** | Von [python.org](https://www.python.org/downloads/) installieren; nicht unbemerkt eine andere Python-Version verwenden. Unter Windows die Option zum Hinzufügen zu `PATH` aktivieren. |
+| **Visual Studio Code** | Optional von [code.visualstudio.com](https://code.visualstudio.com/download) installieren; Editor und integriertes Terminal. Jeder andere Editor und jedes Terminal funktionieren ebenfalls. |
 
-[![In Colab öffnen](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/georgmerz/rl-challenge/blob/main/RL_Challenge_Colab.ipynb)
+Danach Terminal beziehungsweise PowerShell öffnen und die Installation prüfen.
 
-Das Notebook installiert die Abhängigkeiten und Atari-ROMs, erzeugt die
-Baselines, öffnet den Browser-Runner in einem Colab-iframe und führt den kurzen
-DQN-/ONNX-Test aus. Der Colab-Speicher ist temporär; erzeugte Modelle müssen am
-Ende heruntergeladen werden.
+macOS und Linux:
 
 ```bash
+git --version
+python3.11 --version
+```
+
+Windows PowerShell:
+
+```powershell
+git --version
+py -3.11 --version
+```
+
+Beide Befehle müssen eine Versionsnummer ausgeben. Anschließend das öffentliche
+Repository herunterladen; dafür ist kein GitHub-Konto erforderlich:
+
+```bash
+git clone https://github.com/georgmerz/rl-challenge.git
 cd rl-challenge
-python -m venv .venv
+```
+
+Den Ordner nun in VS Code über **File → Open Folder** öffnen. Falls der
+`code`-Befehl eingerichtet ist, genügt alternativ `code .`.
+
+#### Virtuelle Python-Umgebung unter macOS oder Linux
+
+Die virtuelle Umgebung hält die Pakete dieses Projekts von anderen
+Python-Projekten getrennt:
+
+```bash
+python3.11 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements.txt
+python -m pip install --upgrade pip
+python -m pip install --prefer-binary -r requirements.txt
 AutoROM --accept-license
 ```
 
-Unter Windows wird die virtuelle Umgebung mit
-`.venv\Scripts\Activate.ps1` aktiviert. Dieser kurze Test prüft zusätzlich,
-ob die Pong-ROM gefunden wird:
+#### Virtuelle Python-Umgebung unter Windows
+
+```powershell
+py -3.11 -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install --prefer-binary -r requirements.txt
+AutoROM --accept-license
+```
+
+Falls PowerShell die Aktivierung blockiert, kann für dieses eine Terminal
+zuvor `Set-ExecutionPolicy -Scope Process Bypass` ausgeführt werden. Bei jeder
+späteren Arbeit in einem neuen Terminal muss nur die Umgebung erneut aktiviert
+werden; Pakete und ROM werden nicht jedes Mal installiert.
+
+Dieser Test prüft Installation und Pong-ROM:
 
 ```bash
 python -c "from pettingzoo.atari import pong_v3; env = pong_v3.parallel_env(); env.reset(seed=42); env.close(); print('Setup und Pong-ROM: OK')"
 ```
+
+Die letzte Zeile muss `Setup und Pong-ROM: OK` lauten. Schlägt bereits
+`git`, `python3.11` beziehungsweise `py -3.11` fehl, zuerst die jeweilige
+Installation oder die `PATH`-Einstellung korrigieren.
+
+### Alternative ohne lokale Installation: Google Colab
+
+Wer lokal weder Git noch Python einrichten möchte, kann den gemeinsamen
+Durchlauf vollständig in Google Colab öffnen:
+
+[![In Colab öffnen](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/georgmerz/rl-challenge/blob/main/RL_Challenge_Colab.ipynb)
+
+Das Notebook lädt das Repository, installiert Abhängigkeiten und Atari-ROMs,
+erzeugt die Baselines, öffnet den Browser-Runner in einem Colab-iframe und
+führt den kurzen DQN-/ONNX-Test aus. Der Colab-Speicher ist temporär; erzeugte
+Modelle müssen am Ende heruntergeladen werden.
 
 ### Gemeinsam in der Vorlesung
 
