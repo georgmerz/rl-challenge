@@ -200,13 +200,45 @@ flowchart LR
     export -. eine ONNX-Abgabe .-> browser
 ```
 
+### Was ist ein PyTorch-Modell?
+
+Ein PyTorch-Modell ist zunächst ein Python-Objekt, meist eine Unterklasse von
+`torch.nn.Module`. Es beschreibt eine mathematische Funktion, die
+Eingabetensoren in Ausgabetensoren umwandelt. Dabei sind zwei Bestandteile zu
+unterscheiden:
+
+- Die **Architektur** legt die Rechenschritte fest, beispielsweise
+  Convolution-, Aktivierungs- und lineare Schichten.
+- Die **Gewichte** sind die Zahlen in diesen Schichten. Sie werden während des
+  Trainings aus Erfahrungen angepasst.
+
+Die Methode `forward(...)` beschreibt den Vorwärtsweg durch diese Funktion.
+Beim Training berechnet ein Algorithmus zusätzlich einen Loss und verändert
+die Gewichte mit einem Optimierer und Backpropagation. Bei der späteren
+**Inferenz** werden die Gewichte nicht mehr verändert: Das Modell erhält eine
+Beobachtung und berechnet daraus nur noch eine Entscheidung.
+
+In dieser Challenge ist das neuronale Netz nur ein Teil des RL-Trainings. DQN
+verwaltet beispielsweise zusätzlich Environment-Interaktion, Exploration,
+Replay-Buffer, Zielnetz und Optimierer. Das Q-Netz selbst berechnet sechs
+Q-Werte — einen für jede Aktion — und `argmax` wählt die Aktion mit dem
+höchsten Wert. QR-DQN berechnet stattdessen mehrere Return-Quantile pro Aktion
+und vergleicht deren Mittelwerte.
+
+Ein PyTorch- oder SB3-Checkpoint (`.pt`, `.pth` oder `.zip`) kann deshalb
+Trainingszustand enthalten und von Python-Klassen sowie Bibliotheksversionen
+abhängen. Er ist nützlich, um Training fortzusetzen, aber **nicht die Abgabe**.
+Für das Turnier wird nur die fertige Vorwärtsrechnung benötigt: dieselbe
+Vorverarbeitung wie im Training, das gelernte Netz und die Auswahl der Aktion.
+
 ### Was ist ONNX?
 
 **ONNX** (*Open Neural Network Exchange*) ist ein portables Dateiformat für
-fertig trainierte neuronale Netze. Sie können ein Modell zum Beispiel mit
-PyTorch trainieren und anschließend als `.onnx` exportieren. Der
-Turnier-Runner benötigt weder Ihren Trainingscode noch PyTorch: Er lädt nur
-die ONNX-Datei mit ONNX Runtime auf CPU und ruft ihre Policy auf.
+fertig trainierte neuronale Netze. Beim Export wird die für die Inferenz
+benötigte PyTorch-Rechnung in einen standardisierten Rechengraphen mit festen
+Gewichten übersetzt. Der Turnier-Runner benötigt dadurch weder Ihren
+Trainingscode noch PyTorch: Er lädt nur die `.onnx`-Datei mit ONNX Runtime auf
+CPU und ruft ihre Policy auf.
 
 ```text
 Training mit PyTorch / Stable-Baselines3  →  Export als .onnx  →  Browser-Runner
@@ -427,7 +459,118 @@ Beispiel ist ein Einstieg, keine Referenz für faire Turnierbewertung. Training
 kann auf CPU, Apple Silicon oder CUDA laufen; eine GPU beschleunigt längere
 Läufe, ist aber nicht zwingend erforderlich.
 
-## 5. Was sollten Sie im Bericht diskutieren?
+## 5. Einen Trainingslauf starten und überwachen
+
+Die einmalige Installation ist in Abschnitt 1 beschrieben. Bei einem späteren
+Login zunächst in das Repository wechseln und die virtuelle Umgebung
+aktivieren. Auf dem Server kann deren Name beispielsweise `.venv-pong311`
+statt `.venv` sein:
+
+```bash
+cd ~/rl-challenge
+source .venv/bin/activate
+git pull --ff-only
+```
+
+Wurde die Umgebung als `.venv-pong311` angelegt, lautet der mittlere Befehl
+entsprechend `source .venv-pong311/bin/activate`.
+
+Auf einem gemeinsam genutzten GPU-Server vor jedem Lauf mit `nvidia-smi` eine
+freie GPU suchen. Die folgende Variable muss auf deren Nummer gesetzt werden:
+
+```bash
+nvidia-smi
+gpu_id=2
+```
+
+### Kurzer technischer Test
+
+Vor einem langen Lauf sollten Environment, GPU und ONNX-Export mit wenigen
+Schritten gemeinsam geprüft werden:
+
+```bash
+CUDA_VISIBLE_DEVICES="$gpu_id" python train_qrdqn_vanilla.py \
+  --device cuda \
+  --timesteps 128 \
+  --export-every 128 \
+  --output baselines/qrdqn_smoke.onnx
+python validate_submission.py baselines/qrdqn_smoke.onnx
+```
+
+Dieser Test bewertet keine Spielstärke und führt noch keine Lernupdates aus,
+weil das Beispiel erst nach 5.000 Schritten zu lernen beginnt.
+
+### Langen Lauf im Hintergrund starten
+
+`nohup` lässt das Training weiterlaufen, wenn das Terminal oder die
+VS-Code-SSH-Verbindung geschlossen wird. Eine eindeutige Run-ID verhindert,
+dass ältere Modelle und Logs überschrieben werden:
+
+```bash
+mkdir -p logs
+run_id="qrdqn_$(date +%Y%m%d_%H%M%S)"
+
+nohup env CUDA_VISIBLE_DEVICES="$gpu_id" python -u train_qrdqn_vanilla.py \
+  --device cuda \
+  --timesteps 1000000 \
+  --export-every 100000 \
+  --player-id 0 \
+  --opponent baselines/baseline_pong_reactive.onnx \
+  --output "baselines/${run_id}.onnx" \
+  > "logs/${run_id}.log" 2>&1 &
+
+train_pid=$!
+echo "$train_pid" > "logs/${run_id}.pid"
+echo "Run: $run_id"
+echo "PID: $train_pid"
+echo "Log: logs/${run_id}.log"
+```
+
+Die Meldung `nohup: ignoring input` ist normal. Die gezeigten Hyperparameter
+und der feste Gegner sind nur ein Ausgangspunkt, keine Challenge-Regeln. Für
+einen besonders leichten Diagnoselauf kann stattdessen
+`baseline_pong_static.onnx` als Gegner verwendet werden.
+
+### Fortschritt prüfen und Lauf beenden
+
+Im selben Terminal zeigt der folgende Befehl das Log fortlaufend. `Ctrl+C`
+beendet dabei nur die Anzeige, nicht das Training:
+
+```bash
+tail -f "logs/${run_id}.log"
+```
+
+Nach einem erneuten Login lässt sich der zuletzt gestartete Lauf so finden:
+
+```bash
+latest_log=$(ls -t logs/qrdqn_*.log | head -n 1)
+run_id=$(basename "$latest_log" .log)
+pid_file="${latest_log%.log}.pid"
+tail -n 50 "$latest_log"
+ps -p "$(cat "$pid_file")" -o pid,etime,cmd
+```
+
+Nur wenn genau dieser Lauf beendet werden soll:
+
+```bash
+kill "$(cat "$pid_file")"
+```
+
+Alle `--export-every` Schritte entstehen `.onnx`- und `.zip`-Checkpoints im
+Ordner `baselines/`. `.onnx` ist für Validator, Browser und Abgabe bestimmt;
+`.zip` enthält den SB3-Trainingsstand. Nach regulärem Abschluss liegt das
+finale Modell unter `baselines/${run_id}.onnx` und wird nochmals geprüft:
+
+```bash
+python validate_submission.py "baselines/${run_id}.onnx"
+ls -lh "baselines/${run_id}"*.onnx
+```
+
+Für einen CPU-Lauf entfallen `CUDA_VISIBLE_DEVICES` und die Geräteauswahl wird
+zu `--device cpu`; auf einem Mac mit Apple Silicon kann `--device mps`
+verwendet werden.
+
+## 6. Was sollten Sie im Bericht diskutieren?
 
 Der Bericht soll nicht nur den fertigen Code beschreiben, sondern eine
 nachvollziehbare **experimentelle Geschichte** erzählen: Welche Entscheidung
@@ -474,7 +617,7 @@ Gegnertypen enthalten. Befehle, Softwareversionen und wesentliche
 Hyperparameter sollten so dokumentiert sein, dass der Versuch reproduzierbar
 ist.
 
-## 6. Der 10-Minuten-Vortrag
+## 7. Der 10-Minuten-Vortrag
 
 Am **13.11.2026** präsentieren Sie als Zweiergruppe Ihr Vorgehen und Ihre
 Ergebnisse und nehmen anschließend am Turnier teil. Der Vortrag soll eine kurze,
@@ -497,7 +640,7 @@ Gegner, Seeds und beide Seiten belegt werden. Das Turniermodell sollte vor dem
 Termin als validierte ONNX-Datei bereitliegen; ein Live-Training ist nicht Teil
 des Vortrags.
 
-## 7. Abgabe, Bewertung und Notenschlüssel
+## 8. Abgabe, Bewertung und Notenschlüssel
 
 Pro Zweiergruppe werden benötigt:
 

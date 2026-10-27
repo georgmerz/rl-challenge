@@ -190,12 +190,41 @@ flowchart LR
     export -. one ONNX submission .-> browser
 ```
 
+### What is a PyTorch model?
+
+A PyTorch model is initially a Python object, usually a subclass of
+`torch.nn.Module`. It describes a mathematical function that maps input
+tensors to output tensors. Two parts must be distinguished:
+
+- The **architecture** defines the computation, such as convolution,
+  activation, and linear layers.
+- The **weights** are the numbers stored in those layers. Training adjusts
+  them based on experience.
+
+The `forward(...)` method describes the forward computation. During training,
+an algorithm also calculates a loss and updates the weights through an
+optimizer and backpropagation. During later **inference**, weights no longer
+change: the model receives an observation and only computes a decision.
+
+In this challenge, the neural network is only one part of RL training. DQN
+also manages environment interaction, exploration, replay memory, a target
+network, and an optimizer. Its Q-network calculates six Q-values, one for each
+action, and `argmax` selects the largest one. QR-DQN instead estimates several
+return quantiles per action and compares their means.
+
+A PyTorch or SB3 checkpoint (`.pt`, `.pth`, or `.zip`) may contain training
+state and depend on Python classes and library versions. It is useful for
+continuing training, but it is **not the submission**. The tournament needs
+only the completed forward computation: the same preprocessing used during
+training, the learned network, and action selection.
+
 ### What is ONNX?
 
 **ONNX** (*Open Neural Network Exchange*) is a portable format for trained
-neural networks. You can train a model with PyTorch and export it as an
-`.onnx` file. The tournament runner does not require your training code or
-PyTorch. It loads only the ONNX file with ONNX Runtime on the CPU.
+neural networks. Export converts the PyTorch computation needed for inference
+into a standardized computation graph with fixed weights. The tournament
+runner therefore requires neither your training code nor PyTorch. It loads
+only the `.onnx` file with ONNX Runtime on the CPU.
 
 ```text
 PyTorch / Stable-Baselines3 training → ONNX export → browser runner
@@ -395,7 +424,114 @@ Compare variants under identical conditions. The example is an entry point,
 not a reference for fair tournament evaluation. Training can run on CPU,
 Apple Silicon, or CUDA. A GPU accelerates longer runs but is not mandatory.
 
-## 5. What should the report discuss?
+## 5. Starting and monitoring a training run
+
+Section 1 describes the one-time installation. On a later login, first enter
+the repository and activate the virtual environment. On a server its name may,
+for example, be `.venv-pong311` instead of `.venv`:
+
+```bash
+cd ~/rl-challenge
+source .venv/bin/activate
+git pull --ff-only
+```
+
+If the environment was created as `.venv-pong311`, use
+`source .venv-pong311/bin/activate` instead.
+
+On a shared GPU server, use `nvidia-smi` before every run to select a free GPU.
+Set the following variable to that GPU's number:
+
+```bash
+nvidia-smi
+gpu_id=2
+```
+
+### Short technical test
+
+Before a long run, test the environment, GPU, and ONNX export together:
+
+```bash
+CUDA_VISIBLE_DEVICES="$gpu_id" python train_qrdqn_vanilla.py \
+  --device cuda \
+  --timesteps 128 \
+  --export-every 128 \
+  --output baselines/qrdqn_smoke.onnx
+python validate_submission.py baselines/qrdqn_smoke.onnx
+```
+
+This test does not measure playing strength and performs no learning updates,
+because the example starts learning only after 5,000 steps.
+
+### Start a long run in the background
+
+`nohup` keeps the training process running after the terminal or VS Code SSH
+connection closes. A unique run ID prevents older models and logs from being
+overwritten:
+
+```bash
+mkdir -p logs
+run_id="qrdqn_$(date +%Y%m%d_%H%M%S)"
+
+nohup env CUDA_VISIBLE_DEVICES="$gpu_id" python -u train_qrdqn_vanilla.py \
+  --device cuda \
+  --timesteps 1000000 \
+  --export-every 100000 \
+  --player-id 0 \
+  --opponent baselines/baseline_pong_reactive.onnx \
+  --output "baselines/${run_id}.onnx" \
+  > "logs/${run_id}.log" 2>&1 &
+
+train_pid=$!
+echo "$train_pid" > "logs/${run_id}.pid"
+echo "Run: $run_id"
+echo "PID: $train_pid"
+echo "Log: logs/${run_id}.log"
+```
+
+The message `nohup: ignoring input` is normal. These hyperparameters and the
+fixed opponent are only a starting point, not challenge rules. For a
+particularly easy diagnostic run, use `baseline_pong_static.onnx` instead.
+
+### Monitor and stop a run
+
+In the same terminal, the following command continuously displays the log.
+`Ctrl+C` stops only the display, not the training process:
+
+```bash
+tail -f "logs/${run_id}.log"
+```
+
+After logging in again, find the most recently started run as follows:
+
+```bash
+latest_log=$(ls -t logs/qrdqn_*.log | head -n 1)
+run_id=$(basename "$latest_log" .log)
+pid_file="${latest_log%.log}.pid"
+tail -n 50 "$latest_log"
+ps -p "$(cat "$pid_file")" -o pid,etime,cmd
+```
+
+Only when this exact run should be terminated:
+
+```bash
+kill "$(cat "$pid_file")"
+```
+
+Every `--export-every` steps, `.onnx` and `.zip` checkpoints appear in
+`baselines/`. Use `.onnx` for the validator, browser, and submission; `.zip`
+contains the SB3 training state. After normal completion, validate the final
+model at `baselines/${run_id}.onnx`:
+
+```bash
+python validate_submission.py "baselines/${run_id}.onnx"
+ls -lh "baselines/${run_id}"*.onnx
+```
+
+For CPU training, omit `CUDA_VISIBLE_DEVICES` and use `--device cpu`. On an
+Apple Silicon Mac, `--device mps` can be used.
+
+## 6. What should the report discuss?
 
 The report should not merely describe finished code. It should tell a coherent
 **experimental story**: Which decision was made, why was it made, how was it
@@ -442,7 +578,7 @@ additional seeds, both sides, and preferably multiple opponent types. Record
 commands, software versions, hardware, and key hyperparameters so the
 experiment can be reproduced.
 
-## 6. The 10-minute presentation
+## 7. The 10-minute presentation
 
 On **13 November 2026**, each pair presents its approach and results and then
 takes part in the tournament. The presentation should be a concise version of
@@ -464,7 +600,7 @@ table are usually more helpful than many slides of source code. Claims such as
 and both sides. Prepare the tournament model as a validated ONNX file before
 the session; live training is not part of the presentation.
 
-## 7. Submission, assessment, and grading scale
+## 8. Submission, assessment, and grading scale
 
 Each pair must provide:
 
