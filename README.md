@@ -631,24 +631,27 @@ der Arbeit fest.
 
 ### Leitfragen für das eigene Experiment
 
-Das Vanilla-Beispiel ist ein Einstieg, keine Wettbewerbslösung. Wählen Sie
-mindestens eine begründete Fragestellung und vergleichen Sie Varianten unter
-denselben Bedingungen, zum Beispiel:
+Das Vanilla-Beispiel ist ein Einstieg, keine Wettbewerbslösung. Entwickeln Sie
+daraus eine eigene, klar abgegrenzte Untersuchung. Orientieren Sie sich an
+folgenden offenen Leitfragen:
 
-- Wie verändert ein anderer Trainingsgegner oder ein Gegner-Pool das Ergebnis?
-- Ist eine andere Vorverarbeitung oder Netzarchitektur besser?
-- Hilft Reward Shaping, und welches unerwünschte Verhalten kann es erzeugen?
-- Wie unterscheiden sich Modelle, die links, rechts oder auf beiden Seiten
-  trainiert wurden?
+- Welche Frage möchten Sie mit Ihren Experimenten beantworten?
+- Welche Entscheidung oder Veränderung untersuchen Sie, und warum könnte sie
+  einen Unterschied machen?
+- Wie gestalten Sie einen fairen und nachvollziehbaren Vergleich?
+- Welche Ergebnisse benötigen Sie, um Ihre Frage beantworten zu können?
+- Welche Grenzen hat Ihre Untersuchung, und welche Schlussfolgerungen sind
+  deshalb möglich oder nicht möglich?
 
 Eine GPU beschleunigt längere Läufe, ist aber keine methodische Voraussetzung.
 
 ### Was sollten Sie im Bericht diskutieren?
 
-Der Bericht soll nicht nur den fertigen Code beschreiben, sondern eine
-nachvollziehbare **experimentelle Geschichte** erzählen: Welche Entscheidung
-wurde aus welchem Grund getroffen, wie wurde sie geprüft und was folgt aus den
-Ergebnissen? Für 5–8 Seiten bietet sich folgende Struktur an.
+Der Bericht soll nicht nur den fertigen Code beschreiben, sondern den
+**Untersuchungsprozess wissenschaftlich nachvollziehbar dokumentieren**:
+Welche Forschungsfrage wurde verfolgt, wie wurden methodische Entscheidungen
+begründet und geprüft, und welche Schlussfolgerungen lassen die Ergebnisse zu?
+Für 5–8 Seiten bietet sich folgende Struktur an.
 
 #### Aufgabe, State und Aktionen
 

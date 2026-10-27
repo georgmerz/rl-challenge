@@ -602,23 +602,26 @@ experimental results throughout the project.
 
 ### Questions for your own experiment
 
-The vanilla example is an entry point, not a competition solution. Select at
-least one justified question and compare variants under identical conditions,
-for example:
+The vanilla example is an entry point, not a competition solution. Use it to
+develop your own clearly scoped investigation. The following open questions
+can guide your work:
 
-- How does another training opponent or an opponent pool affect performance?
-- Does a different preprocessing method or network architecture work better?
-- Does reward shaping help, and what undesirable behavior can it create?
-- How do models trained on the left, right, or both sides differ?
+- What question do you want your experiments to answer?
+- Which decision or change will you investigate, and why might it matter?
+- How will you create a fair and reproducible comparison?
+- What evidence will you need to answer your question?
+- What are the limits of your investigation, and which conclusions are or are
+  not justified by it?
 
 A GPU accelerates longer runs but is not a methodological requirement.
 
 ### What should the report discuss?
 
-The report should not merely describe finished code. It should tell a coherent
-**experimental story**: Which decision was made, why was it made, how was it
-tested, and what follows from the results? The following structure is suitable
-for 5–8 pages.
+The report should not merely describe finished code. It should provide a
+**transparent and methodologically sound account of the investigation**:
+Which research question was addressed, how were methodological decisions
+justified and tested, and which conclusions are supported by the results? The
+following structure is suitable for 5–8 pages.
 
 #### Task, state, and actions
 
