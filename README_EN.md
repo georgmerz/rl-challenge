@@ -35,19 +35,34 @@ Report (5–8 pages) and final ONNX policy
 10-minute presentation and tournament
 ```
 
-## 1. Preparation and shared walkthrough
+## 1. Two work environments: run locally, train on a server
 
-The goal of the walkthrough is for every participant to execute the complete
-pipeline once:
+The challenge deliberately separates two workflows:
+
+| Environment | Task |
+| --- | --- |
+| **Local computer** | Validate finished ONNX models, run two models against each other in the browser runner, and test the final submission. No GPU is required. |
+| **GPU server or Google Colab** | Train PyTorch models, save checkpoints, and export an ONNX file. See [Section 5](#5-part-b-training-on-a-server-or-in-colab). |
+
+The normal workflow is:
 
 ```text
-Create baseline → validate ONNX → run match → run DQN briefly → test own export
+local: become familiar with the runner
+        ↓
+server/Colab: train and export ONNX
+        ↓
+local: validate ONNX and run it against test opponents
 ```
 
-### One-time setup: start locally from scratch
+Training and tournament execution are technically separate. The server does
+not need the browser runner, and the local computer does not need to perform a
+long training run.
 
-The local route requires three programs. A GPU is not needed to execute the
-baselines, validator, or browser runner.
+### Part A – Local: validate and run models
+
+#### One-time setup from scratch
+
+The local runner requires three programs:
 
 | Program | Installation and purpose |
 | --- | --- |
@@ -91,7 +106,7 @@ Python projects:
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install --prefer-binary -r requirements.txt
+python -m pip install --prefer-binary -r requirements-runner.txt
 AutoROM --accept-license
 ```
 
@@ -101,7 +116,7 @@ AutoROM --accept-license
 py -3.11 -m venv .venv
 .venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install --prefer-binary -r requirements.txt
+python -m pip install --prefer-binary -r requirements-runner.txt
 AutoROM --accept-license
 ```
 
@@ -120,24 +135,11 @@ The last line must read `Setup and Pong ROM: OK`. If `git`, `python3.11`, or
 `py -3.11` already fails, fix that installation or its `PATH` configuration
 before continuing.
 
-### Alternative without local installation: Google Colab
+### Shared local walkthrough in class
 
-Anyone who does not want to install Git or Python locally can run the complete
-shared walkthrough in Google Colab:
-
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/georgmerz/rl-challenge/blob/main/RL_Challenge_Colab.ipynb)
-
-The notebook downloads the repository, installs dependencies and Atari ROMs,
-creates the baselines, opens the browser runner in a Colab iframe, and executes
-the short DQN/ONNX test. Colab storage is temporary, so download generated
-models before the runtime ends.
-
-### Run together in class
-
-#### 1. Create and validate three simple policies
+#### 1. Validate the three included policies
 
 ```bash
-python create_baselines.py
 python validate_submission.py baselines/baseline_pong_static.onnx
 python validate_submission.py baselines/baseline_pong_reactive.onnx
 python validate_submission.py baselines/baseline_pong_track_ball.onnx
@@ -162,29 +164,16 @@ On Windows PowerShell, use `$env:PORT=5001; python app.py`. Then open
 | `baselines/baseline_pong_track_ball.onnx` | Deterministic image-based policy that locates the ball and its paddle using pixel colors. It is not a trained model. |
 
 Try **Start**, **Pause**, **Resume**, and **Stop**, and observe the side changes
-and score.
-
-#### 3. Execute training and export once
-
-Activate the virtual environment in a second terminal and run:
-
-```bash
-python train_dqn_vanilla.py --timesteps 128 --export-every 128 \
-  --output baselines/lecture_smoke.onnx
-python validate_submission.py baselines/lecture_smoke.onnx
-```
-
-This run tests the environment, DQN setup, checkpoints, and ONNX export. It
-does not train a useful policy because DQN updates only begin after 5,000
-steps. You can nevertheless load `lecture_smoke.onnx` into the browser against
-a baseline. Every participant has now completed the future submission path.
+and score. This completes the local part. The first short training and export
+run follows separately on the server or in Colab in
+[Section 5](#5-part-b-training-on-a-server-or-in-colab).
 
 After the walkthrough, you should be able to:
 
-- create and validate a technically compatible ONNX policy,
+- validate an existing ONNX policy and load it in the runner,
 - explain the difference between technical validity and playing strength,
 - identify `image`, `player_id`, and `action` in the model contract, and
-- locate the tournament rules, training adapter, and model implementation.
+- clearly distinguish training from local tournament execution.
 
 ### Recommended code-reading order
 
@@ -197,7 +186,7 @@ After the walkthrough, you should be able to:
 | [`train_dqn_vanilla.py`](train_dqn_vanilla.py) | How do preprocessing, DQN, checkpoints, and export fit together? |
 
 If a step fails, first check whether the virtual environment is active,
-whether `requirements.txt` was installed, and whether
+whether `requirements-runner.txt` was installed, and whether
 `AutoROM --accept-license` completed. If port 5001 is in use, choose another
 port such as 5002.
 
@@ -431,7 +420,7 @@ Pong against ONNX opponent → preprocessing → DQN training
 | [`train_dqn_vanilla.py`](train_dqn_vanilla.py) | Defines preprocessing, the CNN, DQN, checkpoints, and final ONNX export. |
 | [`train_qrdqn_vanilla.py`](train_qrdqn_vanilla.py) | Optional QR-DQN variant using the same environment, preprocessing, and ONNX output. |
 
-The 128-step run from Section 1 is only a technical smoke test. For a first
+The 128-step run from Section 5 is only a technical smoke test. For a first
 run that performs DQN updates, use, for example, 100,000 steps:
 
 ```bash
@@ -483,11 +472,51 @@ Compare variants under identical conditions. The example is an entry point,
 not a reference for fair tournament evaluation. Training can run on CPU,
 Apple Silicon, or CUDA. A GPU accelerates longer runs but is not mandatory.
 
-## 5. Starting and monitoring a training run
+## 5. Part B: Training on a server or in Colab
 
-Section 1 describes the one-time installation. On a later login, first enter
-the repository and activate the virtual environment. On a server its name may,
-for example, be `.venv-pong311` instead of `.venv`:
+Longer training runs belong on a GPU server or in Google Colab. The result of
+this part is an `.onnx` file. Transfer it to the local computer and check it
+there with the validator and browser runner. The GPU is used only for
+training; tournament inference later uses ONNX Runtime on the CPU.
+
+### Option 1 – GPU server
+
+#### Set up the server once from scratch
+
+First connect to the server via SSH. The university or server operator will
+provide the host name and user name:
+
+```bash
+ssh USERNAME@SERVERNAME
+```
+
+Clone the repository into your home directory and create an isolated Python
+environment:
+
+```bash
+git clone https://github.com/georgmerz/rl-challenge.git
+cd rl-challenge
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install --prefer-binary -r requirements.txt
+AutoROM --accept-license
+```
+
+In addition to the local runner packages, the full `requirements.txt` includes
+PyTorch, DQN/QR-DQN, and ONNX export. Check whether PyTorch detects the server
+GPU:
+
+```bash
+python -c "import torch; print('PyTorch:', torch.__version__); print('CUDA:', torch.cuda.is_available()); print('GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'none')"
+```
+
+GPU training requires `CUDA: True`. If it prints `False`, do not accidentally
+start a long CPU run. Check the PyTorch build required by the server driver or
+the operator's installation instructions.
+
+On later logins, entering the repository, activating the environment, and
+updating the checkout are sufficient:
 
 ```bash
 cd ~/rl-challenge
@@ -495,11 +524,9 @@ source .venv/bin/activate
 git pull --ff-only
 ```
 
-If the environment was created as `.venv-pong311`, use
-`source .venv-pong311/bin/activate` instead.
-
 On a shared GPU server, use `nvidia-smi` before every run to select a free GPU.
-Set the following variable to that GPU's number:
+Set the following variable to that GPU's number and do not claim a device whose
+memory is already heavily occupied:
 
 ```bash
 nvidia-smi
@@ -589,6 +616,39 @@ ls -lh "baselines/${run_id}"*.onnx
 
 For CPU training, omit `CUDA_VISIBLE_DEVICES` and use `--device cpu`. On an
 Apple Silicon Mac, `--device mps` can be used.
+
+### Option 2 – Google Colab
+
+If no GPU server is available, use the prepared notebook with the same
+repository in Colab:
+
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/georgmerz/rl-challenge/blob/main/RL_Challenge_Colab.ipynb)
+
+The notebook clones the repository, installs the training dependencies and
+Atari ROMs, and executes the DQN/ONNX workflow. Before training, select a GPU
+under **Runtime → Change runtime type**. Colab storage is temporary; download
+the finished `.onnx` file before the session ends.
+
+### Test the trained ONNX model locally
+
+For a server run, download the finished file with the VS Code file explorer or
+copy it from a **local** terminal:
+
+```bash
+scp USERNAME@SERVERNAME:~/rl-challenge/baselines/MY_MODEL.onnx .
+```
+
+Then validate it in the local repository and load it against an included
+baseline in the runner:
+
+```bash
+python validate_submission.py MY_MODEL.onnx
+PORT=5001 python app.py
+```
+
+Only the `.onnx` file is tested locally and submitted. An SB3 checkpoint with
+the `.zip` extension is only used to resume training and cannot be loaded by
+the tournament runner.
 
 ## 6. What should the report discuss?
 
