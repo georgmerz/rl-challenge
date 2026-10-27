@@ -26,41 +26,28 @@ and results in a ten-minute talk.
 The challenge follows this sequence:
 
 ```text
-Shared technical walkthrough
+Run the browser runner and baselines locally
         ↓
-Experiments in pairs
+Understand rules, model interface, and ONNX export
         ↓
-Report (5–8 pages) and final ONNX policy
+Start vanilla DQN on a server or in Colab
         ↓
-10-minute presentation and tournament
+Run your own experiments in pairs
+        ↓
+Report, 10-minute presentation, and tournament
 ```
 
-## 1. Two work environments: run locally, train on a server
+## 1. Start together: browser runner and baselines
 
-The challenge deliberately separates two workflows:
-
-| Environment | Task |
-| --- | --- |
-| **Local computer** | Validate finished ONNX models, run two models against each other in the browser runner, and test the final submission. No GPU is required. |
-| **GPU server or Google Colab** | Train PyTorch models, save checkpoints, and export an ONNX file. See [Section 5](#5-part-b-training-on-a-server-or-in-colab). |
-
-The normal workflow is:
+In the first shared step, everyone runs the browser runner **locally** and
+examines the three included baselines. No GPU is required. The actual training
+is performed separately later on a GPU server or in Google Colab.
 
 ```text
-local: become familiar with the runner
-        ↓
-server/Colab: train and export ONNX
-        ↓
-local: validate ONNX and run it against test opponents
+install locally → validate baselines → observe a match in the browser
 ```
 
-Training and tournament execution are technically separate. The server does
-not need the browser runner, and the local computer does not need to perform a
-long training run.
-
-### Part A – Local: validate and run models
-
-#### One-time setup from scratch
+### Local setup from scratch
 
 The local runner requires three programs:
 
@@ -135,7 +122,7 @@ The last line must read `Setup and Pong ROM: OK`. If `git`, `python3.11`, or
 `py -3.11` already fails, fix that installation or its `PATH` configuration
 before continuing.
 
-### Shared local walkthrough in class
+### Shared walkthrough in class
 
 #### 1. Validate the three included policies
 
@@ -166,7 +153,7 @@ On Windows PowerShell, use `$env:PORT=5001; python app.py`. Then open
 Try **Start**, **Pause**, **Resume**, and **Stop**, and observe the side changes
 and score. This completes the local part. The first short training and export
 run follows separately on the server or in Colab in
-[Section 5](#5-part-b-training-on-a-server-or-in-colab).
+[Section 4](#4-training-vanilla-dqn-on-a-server-or-in-colab).
 
 After the walkthrough, you should be able to:
 
@@ -175,22 +162,12 @@ After the walkthrough, you should be able to:
 - identify `image`, `player_id`, and `action` in the model contract, and
 - clearly distinguish training from local tournament execution.
 
-### Recommended code-reading order
-
-| File | Guiding question |
-| --- | --- |
-| [`create_baselines.py`](create_baselines.py) | How does a simple policy become an ONNX file? |
-| [`validate_submission.py`](validate_submission.py) | What does technical validation check, and what does it not check? |
-| [`app.py`](app.py) | How does the runner call two models and score a match? |
-| [`pong_opponent_env.py`](pong_opponent_env.py) | How is the two-player arena adapted for a single learning agent? |
-| [`train_dqn_vanilla.py`](train_dqn_vanilla.py) | How do preprocessing, DQN, checkpoints, and export fit together? |
-
 If a step fails, first check whether the virtual environment is active,
 whether `requirements-runner.txt` was installed, and whether
 `AutoROM --accept-license` completed. If port 5001 is in use, choose another
 port such as 5002.
 
-## 2. Task and tournament process
+## 2. Rules, model specification, and export
 
 The policy must return the ball with its paddle and get it past the opponent.
 The actual tournament opponent is unknown during training. The browser runner
@@ -201,6 +178,30 @@ therefore compares two independently uploaded models.
 > interface. PettingZoo/ALE defines Pong mechanics, actions, and environment
 > rewards. Rules used by a training example, such as its training timeout, do
 > not automatically apply to the tournament.
+
+### Match rules
+
+A match consists of ten rounds with fixed, reproducible seeds and alternating
+sides:
+
+| Round | Seed | Upload “Player 1” | Upload “Player 2” |
+| ---: | ---: | --- | --- |
+| 1, 3, 5, 7, 9 | 42, 44, 46, 48, 50 | left/orange (`player_id=1`) | right/green (`player_id=2`) |
+| 2, 4, 6, 8, 10 | 43, 45, 47, 49, 51 | right/green (`player_id=2`) | left/orange (`player_id=1`) |
+
+Each model therefore plays five rounds on each side. In each round:
+
+- A positive environment reward gives one tournament point to the associated
+  upload, and the next round begins.
+- After at most **2,000** environment steps without a positive point, or after
+  a technical termination without a positive point, the round is a draw. Both
+  uploads receive one tournament point.
+- A negative reward alone is not recorded as a separate tournament point.
+- After ten rounds, the upload with more tournament points wins. Equal scores
+  result in a draw.
+
+The browser shows the score and current sides. A match can be paused, resumed,
+or stopped. Stopping ends it without determining a winner afterwards.
 
 ### Architecture: training is separate from the tournament runner
 
@@ -237,96 +238,6 @@ flowchart LR
 
     export -. one ONNX submission .-> browser
 ```
-
-### What is a PyTorch model?
-
-A PyTorch model is initially a Python object, usually a subclass of
-`torch.nn.Module`. It describes a mathematical function that maps input
-tensors to output tensors. Two parts must be distinguished:
-
-- The **architecture** defines the computation, such as convolution,
-  activation, and linear layers.
-- The **weights** are the numbers stored in those layers. Training adjusts
-  them based on experience.
-
-The `forward(...)` method describes the forward computation. During training,
-an algorithm also calculates a loss and updates the weights through an
-optimizer and backpropagation. During later **inference**, weights no longer
-change: the model receives an observation and only computes a decision.
-
-In this challenge, the neural network is only one part of RL training. DQN
-also manages environment interaction, exploration, replay memory, a target
-network, and an optimizer. Its Q-network calculates six Q-values, one for each
-action, and `argmax` selects the largest one. QR-DQN instead estimates several
-return quantiles per action and compares their means.
-
-A PyTorch or SB3 checkpoint (`.pt`, `.pth`, or `.zip`) may contain training
-state and depend on Python classes and library versions. It is useful for
-continuing training, but it is **not the submission**. The tournament needs
-only the completed forward computation: the same preprocessing used during
-training, the learned network, and action selection.
-
-### What is ONNX?
-
-**ONNX** (*Open Neural Network Exchange*) is a portable format for trained
-neural networks. Export converts the PyTorch computation needed for inference
-into a standardized computation graph with fixed weights. The tournament
-runner therefore requires neither your training code nor PyTorch. It loads
-only the `.onnx` file with ONNX Runtime on the CPU.
-
-```text
-PyTorch / Stable-Baselines3 training → ONNX export → browser runner
-        learned weights                fixed API       inference only
-```
-
-The file contains the model architecture and learned weights for inference,
-but not the replay buffer, optimizer, training data, or Python classes. It is
-the **technical submission** and must implement the interface in Section 3.
-
-A basic PyTorch export looks like this:
-
-```python
-model.eval()
-image = torch.zeros((1, 12, 210, 160), dtype=torch.float32)
-player_id = torch.ones((1,), dtype=torch.int64)
-torch.onnx.export(
-    model, (image, player_id), "my_policy.onnx",
-    input_names=["image", "player_id"], output_names=["action"], opset_version=17,
-)
-```
-
-The model's `forward` method must return a valid `int64` action. Validate the
-result with `python validate_submission.py my_policy.onnx`. See the
-[official PyTorch ONNX documentation](https://docs.pytorch.org/docs/stable/onnx.html)
-for more details. The validator checks CPU execution, the interface, and the
-action range, but it does not completely verify playing strength, file size,
-or the ONNX opset.
-
-### Match rules
-
-A match consists of ten rounds with fixed, reproducible seeds and alternating
-sides:
-
-| Round | Seed | Upload “Player 1” | Upload “Player 2” |
-| ---: | ---: | --- | --- |
-| 1, 3, 5, 7, 9 | 42, 44, 46, 48, 50 | left/orange (`player_id=1`) | right/green (`player_id=2`) |
-| 2, 4, 6, 8, 10 | 43, 45, 47, 49, 51 | right/green (`player_id=2`) | left/orange (`player_id=1`) |
-
-Each model therefore plays five rounds on each side. In each round:
-
-- A positive environment reward gives one tournament point to the associated
-  upload, and the next round begins.
-- After at most **2,000** environment steps without a positive point, or after
-  a technical termination without a positive point, the round is a draw. Both
-  uploads receive one tournament point.
-- A negative reward alone is not recorded as a separate tournament point.
-- After ten rounds, the upload with more tournament points wins. Equal scores
-  result in a draw.
-
-The browser shows the score and current sides. A match can be paused, resumed,
-or stopped. Stopping ends it without determining a winner afterwards.
-
-## 3. What must the model implement?
 
 ### Public model contract
 
@@ -390,24 +301,86 @@ In particular, action `3` is not `DOWN`, and actions `4`/`5` are not
 `FIRE_UP`/`FIRE_DOWN`. `FIRE` can start a rally when the ball is stationary;
 Pong also uses a serve timer.
 
-## 4. Project work in pairs
+### What is a PyTorch model?
 
-After the shared walkthrough, work in pairs. Both team members should be able
-to explain the complete system, even if individual tasks are divided. Agree on:
+A PyTorch model is a Python class with trainable weights. Its `forward(...)`
+method describes how inputs become an output. This deliberately small example
+maps `image` and `player_id` to one of the six Pong actions:
 
-- the research question or improvement you want to investigate,
-- state design, preprocessing, reward, and algorithm,
-- training opponents and player sides,
-- experiments that enable a fair comparison, and
-- responsibility for each part of the joint presentation.
+```python
+import torch
+from torch import nn
 
-Record decisions and experimental results as you work so that the report and
-presentation grow from the experiments instead of being reconstructed later.
+class TinyPolicy(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.image_to_q = nn.Sequential(
+            nn.AvgPool2d(kernel_size=(21, 20), stride=(21, 20)),
+            nn.Flatten(),
+            nn.Linear(12 * 10 * 8, 6),
+        )
+        self.side_bias = nn.Embedding(3, 6)  # entries for player_id 1 and 2
 
-### The DQN example as a shared starting point
+    def forward(self, image, player_id):
+        q_values = self.image_to_q(image) + self.side_bias(player_id)
+        return torch.argmax(q_values, dim=1).to(torch.int64)
+
+model = TinyPolicy()
+```
+
+PyTorch is installed with the full training dependencies in Section 4; it is
+not required for the local browser runner in Section 1.
+
+The layers and their connections form the **architecture**; the numbers in
+`Linear` and `Embedding` are the trainable **weights**. Training changes these
+weights. During inference, `forward` only performs the computation and returns
+an action. The example is intentionally small and untrained—it demonstrates
+the form, but it is not a strong Pong policy.
+
+PyTorch/SB3 checkpoints (`.pt`, `.pth`, `.zip`) are used to resume training.
+The submitted artifact is the exported `.onnx` file instead.
+
+### What is ONNX?
+
+**ONNX** (*Open Neural Network Exchange*) is a portable format for trained
+neural networks. Export converts the PyTorch computation needed for inference
+into a standardized computation graph with fixed weights. The tournament
+runner therefore requires neither your training code nor PyTorch. It loads
+only the `.onnx` file with ONNX Runtime on the CPU.
+
+```text
+PyTorch / Stable-Baselines3 training → ONNX export → browser runner
+        learned weights                fixed API       inference only
+```
+
+The file contains the model architecture and learned weights for inference,
+but not the replay buffer, optimizer, training data, or Python classes. It is
+the **technical submission** and must implement the interface described above.
+
+A basic PyTorch export looks like this:
+
+```python
+model.eval()
+image = torch.zeros((1, 12, 210, 160), dtype=torch.float32)
+player_id = torch.ones((1,), dtype=torch.int64)
+torch.onnx.export(
+    model, (image, player_id), "my_policy.onnx",
+    input_names=["image", "player_id"], output_names=["action"], opset_version=17,
+)
+```
+
+The model's `forward` method must return a valid `int64` action. Validate the
+result with `python validate_submission.py my_policy.onnx`. See the
+[official PyTorch ONNX documentation](https://docs.pytorch.org/docs/stable/onnx.html)
+for more details. The validator checks CPU execution, the interface, and the
+action range, but it does not completely verify playing strength, file size,
+or the ONNX opset.
+
+## 3. Understanding the vanilla DQN example
 
 The repository intentionally contains **no finished competition solution**.
-The DQN example does, however, demonstrate the complete technical pipeline:
+The [`train_dqn_vanilla.py`](train_dqn_vanilla.py) script demonstrates a
+minimal complete training pipeline:
 
 ```text
 Pong against ONNX opponent → preprocessing → DQN training
@@ -419,17 +392,6 @@ Pong against ONNX opponent → preprocessing → DQN training
 | [`pong_opponent_env.py`](pong_opponent_env.py) | Converts the two-player game into a Gymnasium environment: one side learns while a selectable ONNX model controls the other side. |
 | [`train_dqn_vanilla.py`](train_dqn_vanilla.py) | Defines preprocessing, the CNN, DQN, checkpoints, and final ONNX export. |
 | [`train_qrdqn_vanilla.py`](train_qrdqn_vanilla.py) | Optional QR-DQN variant using the same environment, preprocessing, and ONNX output. |
-
-The 128-step run from Section 5 is only a technical smoke test. For a first
-run that performs DQN updates, use, for example, 100,000 steps:
-
-```bash
-python create_baselines.py
-python train_dqn_vanilla.py --timesteps 100000 \
-  --opponent baselines/baseline_pong_reactive.onnx \
-  --output baselines/baseline_pong_dqn.onnx
-python validate_submission.py baselines/baseline_pong_dqn.onnx
-```
 
 The example works as follows:
 
@@ -447,32 +409,11 @@ The `.onnx` files are for the browser and submission; the `.zip` files are for
 continuing or inspecting SB3 training. The 1,000-step timeout, DQN, and fixed
 opponent are choices made by this example, not tournament rules.
 
-As an optional alternative, QR-DQN can use the same experimental setup. It
-estimates multiple return quantiles for each action and exports the action with
-the highest mean value. It is a distributional DQN variant, not a complete
-Rainbow DQN implementation:
+The optional `train_qrdqn_vanilla.py` file uses the same setup with QR-DQN.
+For the shared introduction, `train_dqn_vanilla.py` remains the clearer main
+path.
 
-```bash
-python train_qrdqn_vanilla.py --timesteps 100000 \
-  --output baselines/baseline_pong_qrdqn.onnx
-python validate_submission.py baselines/baseline_pong_qrdqn.onnx
-```
-
-### From the example to your experiment
-
-Do not adopt the example uncritically. Agree on at least one justified
-question, for example:
-
-- How does another training opponent or an opponent pool affect performance?
-- Does a different preprocessing method or network architecture work better?
-- Does reward shaping help, and what undesirable behavior can it create?
-- How do models trained on the left, right, or both sides differ?
-
-Compare variants under identical conditions. The example is an entry point,
-not a reference for fair tournament evaluation. Training can run on CPU,
-Apple Silicon, or CUDA. A GPU accelerates longer runs but is not mandatory.
-
-## 5. Part B: Training on a server or in Colab
+## 4. Training vanilla DQN on a server or in Colab
 
 Longer training runs belong on a GPU server or in Google Colab. The result of
 this part is an `.onnx` file. Transfer it to the local computer and check it
@@ -538,12 +479,12 @@ gpu_id=2
 Before a long run, test the environment, GPU, and ONNX export together:
 
 ```bash
-CUDA_VISIBLE_DEVICES="$gpu_id" python train_qrdqn_vanilla.py \
+CUDA_VISIBLE_DEVICES="$gpu_id" python train_dqn_vanilla.py \
   --device cuda \
   --timesteps 128 \
   --export-every 128 \
-  --output baselines/qrdqn_smoke.onnx
-python validate_submission.py baselines/qrdqn_smoke.onnx
+  --output baselines/dqn_smoke.onnx
+python validate_submission.py baselines/dqn_smoke.onnx
 ```
 
 This test does not measure playing strength and performs no learning updates,
@@ -557,9 +498,9 @@ overwritten:
 
 ```bash
 mkdir -p logs
-run_id="qrdqn_$(date +%Y%m%d_%H%M%S)"
+run_id="dqn_$(date +%Y%m%d_%H%M%S)"
 
-nohup env CUDA_VISIBLE_DEVICES="$gpu_id" python -u train_qrdqn_vanilla.py \
+nohup env CUDA_VISIBLE_DEVICES="$gpu_id" python -u train_dqn_vanilla.py \
   --device cuda \
   --timesteps 1000000 \
   --export-every 100000 \
@@ -591,7 +532,7 @@ tail -f "logs/${run_id}.log"
 After logging in again, find the most recently started run as follows:
 
 ```bash
-latest_log=$(ls -t logs/qrdqn_*.log | head -n 1)
+latest_log=$(ls -t logs/dqn_*.log | head -n 1)
 run_id=$(basename "$latest_log" .log)
 pid_file="${latest_log%.log}.pid"
 tail -n 50 "$latest_log"
@@ -650,14 +591,36 @@ Only the `.onnx` file is tested locally and submitted. An SB3 checkpoint with
 the `.zip` extension is only used to resume training and cannot be loaded by
 the tournament runner.
 
-## 6. What should the report discuss?
+## 5. Formal challenge requirements
+
+### Working in pairs
+
+After the shared walkthrough, work in pairs. Both team members should be able
+to explain the complete system even if individual tasks are divided. Agree on
+the method, experiments, report, and presentation, and record decisions and
+experimental results throughout the project.
+
+### Questions for your own experiment
+
+The vanilla example is an entry point, not a competition solution. Select at
+least one justified question and compare variants under identical conditions,
+for example:
+
+- How does another training opponent or an opponent pool affect performance?
+- Does a different preprocessing method or network architecture work better?
+- Does reward shaping help, and what undesirable behavior can it create?
+- How do models trained on the left, right, or both sides differ?
+
+A GPU accelerates longer runs but is not a methodological requirement.
+
+### What should the report discuss?
 
 The report should not merely describe finished code. It should tell a coherent
 **experimental story**: Which decision was made, why was it made, how was it
 tested, and what follows from the results? The following structure is suitable
 for 5–8 pages.
 
-### Task, state, and actions
+#### Task, state, and actions
 
 - How do Pong, rallies, scoring, and rewards work? Which information is and is
   not available to the policy?
@@ -665,7 +628,7 @@ for 5–8 pages.
   movement information can be inferred?
 - How are the six actions, environment reward, and `player_id` interpreted?
 
-### Method and training
+#### Method and training
 
 - Which RL algorithm and architecture were selected, and why do they suit the
   task?
@@ -678,7 +641,7 @@ for 5–8 pages.
 - Which training duration, hyperparameters, hardware, and checkpoint-selection
   criteria were used?
 
-### Evaluation and results
+#### Evaluation and results
 
 - Against which baselines and models was the policy evaluated **without
   further learning**?
@@ -697,7 +660,7 @@ additional seeds, both sides, and preferably multiple opponent types. Record
 commands, software versions, hardware, and key hyperparameters so the
 experiment can be reproduced.
 
-## 7. The 10-minute presentation
+### Agenda for the 10-minute presentation
 
 On **13 November 2026**, each pair presents its approach and results and then
 takes part in the tournament. The presentation should be a concise version of
@@ -719,7 +682,7 @@ table are usually more helpful than many slides of source code. Claims such as
 and both sides. Prepare the tournament model as a validated ONNX file before
 the session; live training is not part of the presentation.
 
-## 8. Submission, assessment, and grading scale
+### Submission, assessment, and grading scale
 
 Each pair must provide:
 
@@ -740,7 +703,7 @@ grade is based on the report. Tournament rank and absolute playing strength do
 not directly determine the grade; the quality of the method, experiments, and
 critical analysis is assessed.
 
-### Report assessment
+#### Report assessment
 
 | Criterion | Points | Expectation |
 | --- | ---: | --- |
@@ -751,7 +714,7 @@ critical analysis is assessed.
 | Clarity and reproducibility | 10 | Structure the report clearly, label figures, and document commands, versions, and hardware. |
 | **Total** | **100** | |
 
-### Grading scale
+#### Grading scale
 
 | Points | Grade |
 | ---: | :--- |
